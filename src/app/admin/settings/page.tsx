@@ -1,7 +1,5 @@
 'use client';
 
-import type { PurchaseMode } from '@/lib/db/types';
-import { purchaseModeOf } from '@/lib/domain/construction-cost';
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { Building2, Check, Globe, Phone, Save } from 'lucide-react';
@@ -69,22 +67,6 @@ function SettingsForm({
   // a boolean, kept apart from the all-string `form` for the reason given below
   const [showPrices, setShowPrices] = useState(settings?.public_show_prices !== false);
   const [showShareSale, setShowShareSale] = useState(settings?.public_show_share_sale === true);
-  /*
-   * The three pipeline gates (BRD SITE-003, DD-004, DEV-004). Kept out of
-   * `form` because that state is all strings and these are booleans —
-   * threading a checkbox through a `set(key, value: string)` helper is how a
-   * `false` ends up stored as the string "false" and reads as true ever after.
-   */
-  const [gates, setGates] = useState({
-    require_feasibility_approval: settings?.require_feasibility_approval ?? false,
-    require_dd_completion: settings?.require_dd_completion ?? false,
-    require_development_ready: settings?.require_development_ready ?? false,
-    block_sales_without_land: settings?.block_sales_without_land ?? false,
-    block_sales_before_approval: settings?.block_sales_before_approval ?? false,
-  });
-  const [purchaseMode, setPurchaseMode] = useState<PurchaseMode>(
-    purchaseModeOf(settings?.purchase_mode),
-  );
   const [error, setError] = useState('');
   const [yearError, setYearError] = useState('');
   const [saved, setSaved] = useState(false);
@@ -134,8 +116,6 @@ function SettingsForm({
         rehab_member_no: form.rehab_member_no.trim() || null,
         public_show_prices: showPrices,
         public_show_share_sale: showShareSale,
-        ...gates,
-        purchase_mode: purchaseMode,
       });
       setSaved(true);
     } finally {
@@ -291,7 +271,7 @@ function SettingsForm({
               <TextInput value={form.linkedin_url} onChange={(e) => set('linkedin_url', e.target.value)} placeholder="https://linkedin.com/company/…" />
             </Field>
             <div className="sm:col-span-2">
-              <GateToggle
+              <SwitchRow
                 label="Show prices on the website"
                 detail="When off, every price on the public site reads “Price on request”, the budget filter is hidden and the payment plan is left out. Buyers can still enquire."
                 checked={showPrices}
@@ -303,7 +283,7 @@ function SettingsForm({
             </div>
             {/* BUYER-PORTAL-PLAN.md §6 — off by default */}
             <div className="sm:col-span-2">
-              <GateToggle
+              <SwitchRow
                 label="Show share offerings on the website"
                 detail="Adds an Invest page listing open Share Sale offerings, where visitors can send a request to buy shares; requests arrive in Share Sale → Customer Requests. Selling shares to the public may need regulatory approval (BSEC) — check with your lawyer before turning this on."
                 checked={showShareSale}
@@ -345,106 +325,6 @@ function SettingsForm({
                 placeholder="Anything worth recording about the company profile"
               />
             </Field>
-          </div>
-        </Card>
-
-        {/*
-          Pipeline gates (BRD-ALIGNMENT-PLAN.md section 5.3). One switch today;
-          the due-diligence and land-development gates join it when their
-          batches land. Listed as a card of its own rather than tucked into the
-          company profile, because these change what the pipeline *does*.
-        */}
-        <Card>
-          <CardHeader title="Pipeline gates" />
-          <p className="mb-3 text-xs text-ink-muted">
-            Each gate stops a land moving on until something is actually done. The first two are BRD
-            rules and always apply. The development gate is off unless switched on: land recorded
-            before this system existed has no development record, and turning it on would strand
-            that land short of a project.
-          </p>
-          <div className="space-y-2">
-            {/*
-              L7 — G1 and G2 are BRD rules (SITE-003, DD-004), not preferences,
-              so they are always on. Land entered after the fact is put in place
-              with "Correct status" on the land page, which records why.
-            */}
-            <AlwaysOnGate
-              label="SITE-003 · A feasibility study before negotiation"
-              detail="No negotiation round can be recorded until the latest feasibility study recommends Proceed."
-            />
-            <AlwaysOnGate
-              label="DD-004 · Mandatory due diligence before acquisition"
-              detail="Registration or JV signing cannot be recorded while a mandatory checklist item is unfinished or failed, unless it carries an authorised waiver."
-            />
-            <GateToggle
-              label="G3 · Require land development to be ready before a project"
-              detail="A land cannot be linked to a project while a development activity is still in progress, unless the land is marked as needing no development. A project planned on land that is still being filled has a schedule nobody can meet."
-              checked={gates.require_development_ready}
-              onChange={(v) => {
-                setGates((g) => ({ ...g, require_development_ready: v }));
-                setSaved(false);
-              }}
-            />
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="Sales gates" />
-          <p className="mb-3 text-xs text-ink-muted">
-            When a project&rsquo;s sales are opened, these are always shown as warnings. Switch one
-            on to make it a hard stop instead. Starting construction on land that is not secured is
-            always blocked.
-          </p>
-          <div className="space-y-2">
-            <GateToggle
-              label="Block sales until the land is secured"
-              detail="Sales cannot open while any land under the project is still being sourced, checked or negotiated. Land recorded as already owned, registered, or with a signed JV counts as secured."
-              checked={gates.block_sales_without_land}
-              onChange={(v) => {
-                setGates((g) => ({ ...g, block_sales_without_land: v }));
-                setSaved(false);
-              }}
-            />
-            <GateToggle
-              label="Block sales before the plan approval stage"
-              detail="Sales cannot open until the project has reached Approval. The Real Estate Development and Management Act 2010 expects an approved plan before a project is advertised. Land-share projects are exempt: nothing is built."
-              checked={gates.block_sales_before_approval}
-              onChange={(v) => {
-                setGates((g) => ({ ...g, block_sales_before_approval: v }));
-                setSaved(false);
-              }}
-            />
-          </div>
-        </Card>
-
-        <Card>
-          <CardHeader title="How you buy" />
-          <p className="mb-3 text-xs text-ink-muted">
-            Decides which buying screens are shown. Nothing recorded is hidden from reports or
-            deleted when you switch.
-          </p>
-          <div className="space-y-2">
-            {PURCHASE_MODE_OPTIONS.map((o) => (
-              <label
-                key={o.value}
-                className="flex cursor-pointer items-start gap-3 rounded-xl border border-hairline p-3 transition-colors hover:bg-admin-50/40"
-              >
-                <input
-                  type="radio"
-                  name="purchase_mode"
-                  className="mt-0.5 size-4 shrink-0 accent-admin-600"
-                  checked={purchaseMode === o.value}
-                  onChange={() => {
-                    setPurchaseMode(o.value);
-                    setSaved(false);
-                  }}
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-medium text-ink">{o.label}</span>
-                  <span className="mt-0.5 block text-xs text-ink-muted">{o.detail}</span>
-                </span>
-              </label>
-            ))}
           </div>
         </Card>
 
@@ -503,37 +383,8 @@ function SettingsForm({
   );
 }
 
-/** A BRD rule shown beside the switches, so nobody goes looking for its toggle. */
-function AlwaysOnGate({ label, detail }: { label: string; detail: string }) {
-  return (
-    <div className="flex items-start gap-3 rounded-xl border border-hairline bg-slate-50/60 p-3">
-      <Check className="mt-0.5 size-4 shrink-0 text-admin-600" />
-      <span className="min-w-0">
-        <span className="block text-sm font-medium text-ink">{label} — always on</span>
-        <span className="mt-0.5 block text-xs text-ink-muted">{detail}</span>
-      </span>
-    </div>
-  );
-}
-
-const PURCHASE_MODE_OPTIONS: { value: PurchaseMode; label: string; detail: string }[] = [
-  {
-    value: 'direct',
-    label: 'Direct purchase',
-    detail:
-      'The site buys and records each cost against a work item, with the bill attached, and it is paid from Payments. For a small developer.',
-  },
-  {
-    value: 'procurement',
-    label: 'Procurement',
-    detail:
-      'Material request → approval → purchase order → receive → supplier bill → voucher. For a developer with a store and a purchase team.',
-  },
-  { value: 'both', label: 'Both', detail: 'Every buying screen is shown; each cost uses whichever path fits.' },
-];
-
-/** One pipeline gate. Extracted because there are three of them now. */
-function GateToggle({
+/** One labelled on/off switch with a line of explanation under it. */
+function SwitchRow({
   label,
   detail,
   checked,

@@ -8,7 +8,7 @@ import { projectRepository } from '@/lib/repositories';
 
 export default function EditProjectPage() {
   const { id } = useParams<{ id: string }>();
-  const project = useLiveQuery(() => projectRepository.getWithRelations(id), [id]);
+  const project = useLiveQuery(() => projectRepository.get(id), [id]);
 
   if (project === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
   if (!project) return <p className="text-sm text-ink-muted">This project no longer exists.</p>;

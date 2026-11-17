@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useSyncExternalStore } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { usePurchaseMode } from '@/lib/settings/use-purchase-mode';
 import { useMockSession } from '@/lib/auth/mock-session';
 import { canView } from '@/lib/domain/access';
 import { cn } from '@/lib/utils/cn';
@@ -108,7 +107,6 @@ export function AdminSidebar({
 }) {
   const pathname = usePathname();
   const { role } = useMockSession();
-  const { procurement, direct, mode } = usePurchaseMode();
 
   /*
    * Section 9.6 applied to the menu: a role only sees the modules it can open.
@@ -122,11 +120,7 @@ export function AdminSidebar({
     items: group.items.filter(
       (item) =>
         (item.module === null || canView(role, item.module)) &&
-        (item.visibleFor === undefined || item.visibleFor(role)) &&
-        (!item.procurementOnly || procurement) &&
-        (!item.directOnly || direct) &&
-        // until settings load, keep Finance hidden rather than flash it
-        (!item.hiddenInDirect || (mode !== undefined && mode !== 'direct')),
+        (item.visibleFor === undefined || item.visibleFor(role)),
     ),
   })).filter((group) => group.items.length > 0);
 

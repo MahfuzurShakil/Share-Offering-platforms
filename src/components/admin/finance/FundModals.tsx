@@ -591,8 +591,8 @@ export function AllocateModal({ overview, onClose }: { overview: FundOverview; o
   const fundRow = (id: string) => overview.projects.find((r) => r.project_id === id);
   const picked = fundRow(projectId);
   const pickedName = (projects ?? []).find((p) => p.id === projectId)?.name;
-  // what it needs to clear its unpaid bills
-  const shortfall = picked ? Math.max(0, picked.owed - picked.remaining) : 0;
+  // what it is short by, if it has paid out more than it took in
+  const shortfall = picked ? Math.max(0, -picked.remaining) : 0;
   const tooMuch = value > available + 0.005;
 
   async function save() {
@@ -647,21 +647,21 @@ export function AllocateModal({ overview, onClose }: { overview: FundOverview; o
                 <tr className="border-b border-hairline">
                   <th className="px-3 py-2 font-medium">Project</th>
                   <th className="px-3 py-2 text-right font-medium">Left</th>
-                  <th className="px-3 py-2 text-right font-medium">Bills unpaid</th>
+                  <th className="px-3 py-2 text-right font-medium">Cost recorded</th>
                 </tr>
               </thead>
               <tbody>
-                {/* the ones that cannot pay their bills first */}
+                {/* the ones with the least money left first */}
                 {[...(projects ?? [])]
                   .sort((a, b) => {
                     const ra = fundRow(a.id);
                     const rb = fundRow(b.id);
-                    const gap = (r?: typeof ra) => (r ? r.owed - r.remaining : -Infinity);
-                    return gap(rb) - gap(ra);
+                    const left = (r?: typeof ra) => (r ? r.remaining : Infinity);
+                    return left(ra) - left(rb);
                   })
                   .map((p) => {
                     const r = fundRow(p.id);
-                    const short = r ? r.owed > r.remaining : false;
+                    const short = r ? r.remaining < 0 : false;
                     return (
                       <tr
                         key={p.id}
@@ -691,7 +691,7 @@ export function AllocateModal({ overview, onClose }: { overview: FundOverview; o
                           {formatBdt(r?.remaining ?? 0)}
                         </td>
                         <td className="px-3 py-2 text-right tabular-nums text-ink-muted">
-                          {r?.owed ? formatBdt(r.owed) : '—'}
+                          {r?.cost ? formatBdt(r.cost) : '—'}
                         </td>
                       </tr>
                     );

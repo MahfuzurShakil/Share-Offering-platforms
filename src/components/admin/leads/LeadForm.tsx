@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
@@ -15,21 +15,13 @@ import {
   type Lead,
   type LeadSource,
   type Project,
-  type Unit,
   type User,
 } from '@/lib/db/types';
 import { LEAD_SOURCE_LABEL } from '@/lib/domain/lead';
 import {
-  UNIT_STATUS_META,
-  projectShape,
-  unitDescription,
-  unitSizeLabel,
-} from '@/lib/domain/project';
-import {
   leadRepository,
   normalizePhone,
   projectRepository,
-  unitRepository,
   userRepository,
   type LeadWithRelations,
 } from '@/lib/repositories';
@@ -83,16 +75,6 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
     userRepository.salesTeam().then(setSalesTeam);
   }, []);
 
-  // units are only meaningful once a project is picked
-  const loadedUnits = useLiveQuery<Unit[]>(
-    () =>
-      form.interested_project_id
-        ? unitRepository.listForProject(form.interested_project_id)
-        : Promise.resolve<Unit[]>([]),
-    [form.interested_project_id],
-  );
-  const units = useMemo(() => loadedUnits ?? [], [loadedUnits]);
-
   // live dedup check — only on a new lead; editing keeps its own number
   const duplicate =
     useLiveQuery<Lead | null>(
@@ -105,19 +87,6 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
-
-  const selectedUnit = useMemo(
-    () => units.find((u) => u.id === form.interested_unit_id),
-    [units, form.interested_unit_id],
-  );
-
-  /*
-   * v27 — what the picked project sells. Before one is picked the field says
-   * "Unit", which is what it always said and is the right generic word.
-   */
-  const shape = projectShape(
-    projects.find((p) => p.id === form.interested_project_id)?.project_type ?? 'apartment',
-  );
 
   function validate(): boolean {
     const next: Record<string, string> = {};
@@ -143,7 +112,7 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
         source: form.source,
         inquiry_message: form.inquiry_message.trim() || null,
         interested_project_id: form.interested_project_id || null,
-        interested_unit_id: form.interested_unit_id || null,
+        interested_unit_id: null,
         budget_range: form.budget_range || null,
         assigned_to: form.assigned_to || null,
       };
@@ -263,37 +232,12 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
           <Field label="Interested Project">
             <SelectInput
               value={form.interested_project_id}
-              onChange={(e) => {
-                set('interested_project_id', e.target.value);
-                set('interested_unit_id', '');
-              }}
+              onChange={(e) => set('interested_project_id', e.target.value)}
             >
               <option value="">Not decided</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.code} — {p.name}
-                </option>
-              ))}
-            </SelectInput>
-          </Field>
-          {/* v27 — a lead can be interested in a plot or a share too */}
-          <Field
-            label={`Interested ${shape.labels.item}`}
-            hint={
-              selectedUnit
-                ? `${unitSizeLabel(selectedUnit, shape)} · ${UNIT_STATUS_META[selectedUnit.status].label}`
-                : undefined
-            }
-          >
-            <SelectInput
-              value={form.interested_unit_id}
-              disabled={!form.interested_project_id}
-              onChange={(e) => set('interested_unit_id', e.target.value)}
-            >
-              <option value="">Not decided</option>
-              {units.map((u) => (
-                <option key={u.id} value={u.id}>
-                  {unitDescription(u, shape)}
                 </option>
               ))}
             </SelectInput>

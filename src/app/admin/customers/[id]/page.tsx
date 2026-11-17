@@ -6,13 +6,9 @@ import { useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import {
   ArrowLeft,
-  Building2,
   CircleUserRound,
-  FileSignature,
-  Layers,
   Pencil,
   PieChart,
-  Plus,
   Receipt,
   Trash2,
   UserRound,
@@ -27,7 +23,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ResultDialog } from '@/components/ui/ResultDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { BOOKING_STATUS_META } from '@/lib/domain/booking';
 import { LEAD_STATUS_META } from '@/lib/domain/lead';
 import { SALE_HEALTH_META, formatSharePct } from '@/lib/domain/share-sale';
 import { useMockSession } from '@/lib/auth/mock-session';
@@ -36,18 +31,13 @@ import {
   customerPortfolioRepository,
   customerRepository,
   customerShareFile,
-  type CustomerRole,
   type MoneyTotals,
 } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate, formatPhone } from '@/lib/utils/format';
 
-type Tab = 'overview' | 'homes' | 'shares' | 'earnings' | 'payments' | 'documents';
+type Tab = 'overview' | 'shares' | 'earnings' | 'payments' | 'documents';
 
-const ROLE_BADGE: Record<CustomerRole, { label: string; tone: 'teal' | 'blue' }> = {
-  buyer: { label: 'Buyer', tone: 'teal' },
-  investor: { label: 'Investor', tone: 'blue' },
-};
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -108,15 +98,12 @@ export default function CustomerDetailPage() {
     );
   }
 
-  const { portfolio, homes, shares, payments } = holdings;
-  const isBuyer = portfolio.roles.includes('buyer') || homes.length > 0;
-  const isInvestor = portfolio.roles.includes('investor') || shares.length > 0;
+  const { portfolio, shares, payments } = holdings;
+  const isInvestor = portfolio.is_investor || shares.length > 0;
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'overview', label: 'Overview', show: true },
-    // a customer with nothing yet still sees where to book a unit
-    { key: 'homes', label: `Flats & Plots (${homes.length})`, show: isBuyer || !isInvestor },
-    { key: 'shares', label: `Shares (${shares.length})`, show: isInvestor },
+    { key: 'shares', label: `Shares (${shares.length})`, show: true },
     // REVENUE-SHARE-PLAN.md §5.4 — profit shared from their holdings
     { key: 'earnings', label: 'Earnings', show: isInvestor },
     { key: 'payments', label: `Payments (${payments.length})`, show: payments.length > 0 },
@@ -137,16 +124,6 @@ export default function CustomerDetailPage() {
         subtitle={`${customer.code} · ${formatPhone(customer.phone)}`}
         action={
           <div className="flex flex-wrap gap-2">
-            <Link href={`/admin/bookings/new?customer=${customer.id}`}>
-              <Button variant="outline">
-                <Plus className="size-4" /> Book a unit
-              </Button>
-            </Link>
-            <Link href={`/admin/bookings/new-multi?customer=${customer.id}`}>
-              <Button variant="outline">
-                <Layers className="size-4" /> Book several units
-              </Button>
-            </Link>
             <Link href="/admin/share-sale">
               <Button variant="outline">
                 <PieChart className="size-4" /> Reserve shares
@@ -206,17 +183,7 @@ export default function CustomerDetailPage() {
                 <Row
                   label="Type"
                   value={
-                    portfolio.roles.length ? (
-                      <span className="flex flex-wrap justify-end gap-1">
-                        {portfolio.roles.map((r) => (
-                          <Badge key={r} tone={ROLE_BADGE[r].tone}>
-                            {ROLE_BADGE[r].label}
-                          </Badge>
-                        ))}
-                      </span>
-                    ) : (
-                      'Not set'
-                    )
+                    isInvestor ? <Badge tone="blue">Investor</Badge> : 'Nothing held yet'
                   }
                 />
                 <Row
@@ -250,92 +217,6 @@ export default function CustomerDetailPage() {
                 <Row label="Customer since" value={formatDate(customer.created_at)} />
               </Card>
             </div>
-          )}
-
-          {tab === 'homes' && (
-            <Card>
-              <CardHeader
-                title="Flats & Plots"
-                action={
-                  <div className="flex gap-2">
-                    <Link href={`/admin/bookings/new-multi?customer=${customer.id}`}>
-                      <Button size="sm" variant="outline">
-                        <Layers className="size-4" /> Book several
-                      </Button>
-                    </Link>
-                    <Link href={`/admin/bookings/new?customer=${customer.id}`}>
-                      <Button size="sm">
-                        <Plus className="size-4" /> Book a unit
-                      </Button>
-                    </Link>
-                  </div>
-                }
-              />
-              {homes.length === 0 ? (
-                <EmptyState
-                  icon={FileSignature}
-                  title="No booking yet"
-                  description="This customer has not taken a unit. Book one to get started."
-                  action={
-                    <Link href={`/admin/bookings/new?customer=${customer.id}`}>
-                      <Button>
-                        <Plus className="size-4" /> Book a unit
-                      </Button>
-                    </Link>
-                  }
-                />
-              ) : (
-                <ul className="space-y-3">
-                  {homes.map(({ booking, unit, project, ledger }) => {
-                    const pct = booking.final_price > 0 ? Math.min(100, (ledger.paid / booking.final_price) * 100) : 0;
-                    return (
-                      <li key={booking.id}>
-                        <Link
-                          href={`/admin/bookings/${booking.id}`}
-                          className="flex flex-wrap items-center gap-3 rounded-xl border border-hairline p-3 transition-colors hover:bg-admin-50/60"
-                        >
-                          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-admin-50 text-admin-600">
-                            <Building2 className="size-5" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
-                              {booking.code}
-                              {unit && <span className="text-ink-muted">· {unit.code}</span>}
-                              {project && <span className="text-ink-muted">· {project.name}</span>}
-                              {booking.booking_group && (
-                                <Badge tone="blue">
-                                  <Layers className="size-3.5" /> {booking.booking_group}
-                                </Badge>
-                              )}
-                            </p>
-                            <p className="text-xs text-ink-muted">
-                              {formatDate(booking.booking_date)} · {formatBdt(booking.final_price)}
-                              {booking.status !== 'cancelled' && (
-                                <>
-                                  {' · '}
-                                  {formatBdt(ledger.paid)} paid
-                                  {ledger.due_now > 0.5 && <span className="text-red-600"> · {formatBdt(ledger.due_now)} overdue</span>}
-                                  {booking.fully_paid_on && ' · fully paid'}
-                                </>
-                              )}
-                            </p>
-                            {booking.status !== 'cancelled' && (
-                              <div className="mt-2 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-100">
-                                <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
-                              </div>
-                            )}
-                          </div>
-                          <div className="flex flex-col items-end gap-1">
-                            <Badge tone={BOOKING_STATUS_META[booking.status].tone}>{BOOKING_STATUS_META[booking.status].label}</Badge>
-                            {booking.signing && <Badge tone="green">Agreement signed</Badge>}
-                          </div>
-                        </Link>
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </Card>
           )}
 
           {tab === 'shares' && (
@@ -414,7 +295,7 @@ export default function CustomerDetailPage() {
                         <td className="py-2.5 pr-3 text-ink">{formatDate(p.date)}</td>
                         <td className="py-2.5 pr-3">
                           <Link href={p.href} className="inline-flex items-center gap-1.5 text-admin-700 hover:underline">
-                            {p.kind === 'home' ? <Building2 className="size-3.5" /> : <PieChart className="size-3.5" />}
+                            <PieChart className="size-3.5" />
                             {p.against}
                           </Link>
                           {p.online && (
@@ -448,14 +329,14 @@ export default function CustomerDetailPage() {
           {/* one Documents tab in one design (feedback D3): the customer file, then anything else on the customer */}
           {tab === 'documents' && (
             <Card>
-              <CardHeader title="Documents" subtitle="KYC papers and each booking's and share purchase's papers — the customer sees these on their Customer Portal." />
+              <CardHeader title="Documents" subtitle="KYC papers and each share purchase's papers — the customer sees these on their Customer Portal." />
               {shareFile && (
                 <CustomerShareFile
                   customerId={customer.id}
                   uploads={shareFile.uploads}
                   sales={shareFile.sales}
-                  bookings={homes.map((h) => ({ id: h.booking.id, code: `${h.booking.code}${h.unit ? ` · ${h.unit.code}` : ''}` }))}
-                  mayEdit={canEdit(role, 'share_sale') || canEdit(role, 'booking')}
+                  bookings={[]}
+                  mayEdit={canEdit(role, 'share_sale')}
                 />
               )}
               <section className="mt-6 border-t border-hairline pt-5">
@@ -474,13 +355,11 @@ export default function CustomerDetailPage() {
               </span>
               <p className="text-base font-semibold text-ink">{customer.name}</p>
               <p className="text-sm text-ink-muted">{customer.profession ?? 'Customer'}</p>
-              <span className="mt-2 flex flex-wrap justify-center gap-1">
-                {portfolio.roles.map((r) => (
-                  <Badge key={r} tone={ROLE_BADGE[r].tone}>
-                    {ROLE_BADGE[r].label}
-                  </Badge>
-                ))}
-              </span>
+              {isInvestor && (
+                <span className="mt-2 flex flex-wrap justify-center gap-1">
+                  <Badge tone="blue">Investor</Badge>
+                </span>
+              )}
               <a href={`tel:${customer.phone}`} className="mt-3 w-full">
                 <Button variant="outline" size="sm" className="w-full">
                   Call {formatPhone(customer.phone)}
@@ -489,17 +368,15 @@ export default function CustomerDetailPage() {
             </div>
           </Card>
 
-          {isBuyer && <MoneyCard title="Flats & plots" m={portfolio.homes} />}
           {isInvestor && <MoneyCard title="Shares" m={portfolio.shares} />}
 
-          {portfolio.roles.length > 0 && (
+          {isInvestor && (
             <Card>
               <CardHeader title="Customer Portal" />
               <p className="flex items-start gap-2 text-sm text-ink-muted">
                 <CircleUserRound className="mt-0.5 size-4 shrink-0 text-admin-600" />
                 Signs in at /customer with {formatPhone(customer.phone)} and a one-time code, and sees
-                {isBuyer && isInvestor ? ' their homes and their shares' : isBuyer ? ' their homes' : ' their shares'}, payment schedules,
-                receipts and papers.
+                their shares, payment schedules, receipts and papers.
               </p>
             </Card>
           )}

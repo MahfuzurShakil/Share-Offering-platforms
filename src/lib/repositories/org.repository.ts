@@ -3,7 +3,7 @@
 import { db } from '../db/database';
 import type { CommissionSaleKind, LookupValue, OrgMember, OrgMove } from '../db/types';
 import { descendantsOf, nextPlainCode, wouldLoop } from '../domain/commission';
-import { money } from '../domain/procurement';
+import { money } from '../domain/money';
 import { todayLocal } from '../utils/format';
 import { BaseRepository } from './base.repository';
 import { lookupRepository } from './lookup.repository';
@@ -48,7 +48,7 @@ export interface OrgNode {
 
 /** A sale counts once it holds what was sold: not released, not cancelled. */
 async function salesByMember(): Promise<Map<string, { amount: number; count: number }>> {
-  const [shares, bookings] = await Promise.all([db.share_sales.toArray(), db.bookings.toArray()]);
+  const shares = await db.share_sales.toArray();
   const out = new Map<string, { amount: number; count: number }>();
   const add = (id: string | null | undefined, amount: number) => {
     if (!id) return;
@@ -56,7 +56,6 @@ async function salesByMember(): Promise<Map<string, { amount: number; count: num
     out.set(id, { amount: money(t.amount + amount), count: t.count + 1 });
   };
   for (const s of shares) if (s.status !== 'released' && s.status !== 'cancelled') add(s.sold_by_member_id, s.total_price);
-  for (const b of bookings) if (b.status !== 'cancelled') add(b.sold_by_member_id, b.final_price);
   return out;
 }
 
@@ -224,14 +223,13 @@ class OrgMemberRepository extends BaseRepository<OrgMember> {
       const m = await db.org_members.get(memberId);
       if (!m || m.status !== 'active') throw new Error('Pick a member still in the sales team.');
     }
-    const lines = await (kind === 'share' ? db.commission_lines.where('share_sale_id') : db.commission_lines.where('booking_id')).equals(saleId).toArray();
+    const lines = await db.commission_lines.where('share_sale_id').equals(saleId).toArray();
     const seller = lines.find((l) => l.role === 'seller');
     if (seller && seller.member_id !== memberId && lines.some((l) => l.status !== 'pending')) {
       throw new Error('Commission on this sale has already been earned, so its seller cannot change.');
     }
     const changes = { sold_by_member_id: memberId, updated_at: new Date().toISOString() };
-    if (kind === 'share') await db.share_sales.update(saleId, changes);
-    else await db.bookings.update(saleId, changes);
+    await db.share_sales.update(saleId, changes);
   }
 }
 

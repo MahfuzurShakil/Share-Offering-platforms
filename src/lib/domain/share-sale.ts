@@ -12,7 +12,7 @@ import type {
   ShareSale,
   ShareSaleStatus,
 } from '../db/types';
-import { addMonths } from './booking';
+import { addMonths } from './money';
 import {
   DUE_WINDOW_DAYS,
   INSTALLMENT_STATUS_META,

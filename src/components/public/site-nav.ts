@@ -19,7 +19,6 @@ export const SITE_NAV: { href: string; label: string; mega?: 'projects'; shareSa
 /** Footer-only links: helpful pages that would crowd the header. */
 export const FOOTER_EXTRA: { href: string; label: string }[] = [
   { href: '/nrb', label: en.nav.nrb },
-  { href: '/landowners', label: en.nav.landowners },
   { href: '/blog', label: en.nav.blog },
 ];
 export const LEGAL_NAV: { href: string; label: string }[] = [

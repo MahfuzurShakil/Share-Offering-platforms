@@ -12,9 +12,8 @@ import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/component
 import { useMockSession } from '@/lib/auth/mock-session';
 import type { Lead, LeadStatus } from '@/lib/db/types';
 import { LEAD_PIPELINE_STEPS, LEAD_STATUS_META, allowedNextLeadStatuses } from '@/lib/domain/lead';
-import { isUnitSellable } from '@/lib/domain/project';
 import { LOST_REASONS, leadStage, type LeadStage, type LeadStageField } from '@/lib/domain/lead-stages';
-import { leadRepository, projectRepository, unitRepository } from '@/lib/repositories';
+import { leadRepository, projectRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, todayLocal } from '@/lib/utils/format';
 
@@ -23,7 +22,7 @@ import { formatBdt, todayLocal } from '@/lib/utils/format';
  *
  * Like the project status: the main button completes the stage the lead is in
  * ("Mark Site Visit Done") and its popup records what happened there, then the
- * lead moves on. Negotiation is completed by booking a unit; any open lead can
+ * lead moves on. Negotiation is completed by selling shares; any open lead can
  * be booked straight away or marked lost with a reason.
  */
 export function LeadStatusCard({ lead }: { lead: Lead }) {
@@ -87,8 +86,8 @@ export function LeadStatusCard({ lead }: { lead: Lead }) {
 
         {isBooked ? (
           <p className="text-xs text-ink-muted">
-            Booked — the booking and the customer are listed below. Cancelling the booking puts
-            this lead back in Negotiation.
+            Bought — the share purchase and the customer are listed below. Releasing the purchase
+            puts this lead back in Negotiation.
           </p>
         ) : isLost ? (
           <Button size="sm" variant="outline" className="w-full" onClick={() => setDialog('revive')}>
@@ -101,16 +100,16 @@ export function LeadStatusCard({ lead }: { lead: Lead }) {
                 <Button size="sm" className="w-full" onClick={() => setDialog('stage')}>
                   <GitBranch className="size-4" /> {stage.button}
                 </Button>
-                <Link href={`/admin/bookings/new?lead=${lead.id}`} className="block">
+                <Link href={`/admin/share-sale?lead=${lead.id}`} className="block">
                   <Button size="sm" variant="outline" className="w-full">
-                    <FileSignature className="size-4" /> Book a unit now
+                    <FileSignature className="size-4" /> Sell shares now
                   </Button>
                 </Link>
               </>
             ) : (
-              <Link href={`/admin/bookings/new?lead=${lead.id}`} className="block">
+              <Link href={`/admin/share-sale?lead=${lead.id}`} className="block">
                 <Button size="sm" className="w-full">
-                  <FileSignature className="size-4" /> Book a unit
+                  <FileSignature className="size-4" /> Sell shares
                 </Button>
               </Link>
             )}
@@ -135,7 +134,6 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
   const [date, setDate] = useState(today);
   const [answers, setAnswers] = useState<Record<string, string>>(() => ({
     project: lead.interested_project_id ?? '',
-    unit: lead.interested_unit_id ?? '',
     budget: lead.budget_range ?? '',
   }));
   const [notes, setNotes] = useState('');
@@ -144,12 +142,7 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
   const [busy, setBusy] = useState(false);
 
   const projects = useLiveQuery(() => projectRepository.list(), []);
-  const units = useLiveQuery(
-    () => (answers.project ? unitRepository.listForProject(answers.project) : Promise.resolve([])),
-    [answers.project],
-  );
-  const set = (key: string, value: string) =>
-    setAnswers((a) => ({ ...a, [key]: value, ...(key === 'project' ? { unit: '' } : {}) }));
+  const set = (key: string, value: string) => setAnswers((a) => ({ ...a, [key]: value }));
 
   async function save() {
     const problems: string[] = [];
@@ -176,11 +169,9 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
       details[f.label] =
         f.type === 'project'
           ? (projects?.find((p) => p.id === v)?.name ?? v)
-          : f.type === 'unit'
-            ? (units?.find((u) => u.id === v)?.code ?? v)
-            : f.type === 'money'
-              ? formatBdt(Number(v))
-              : v;
+          : f.type === 'money'
+            ? formatBdt(Number(v))
+            : v;
       if (f.updates) updates[f.updates] = v;
       if (f.followUp) next = v;
     }
@@ -227,20 +218,6 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
             {(projects ?? []).map((p) => (
               <option key={p.id} value={p.id}>
                 {p.name}
-              </option>
-            ))}
-          </SelectInput>
-        );
-      case 'unit':
-        return (
-          <SelectInput value={value} disabled={!answers.project} onChange={(e) => set(f.key, e.target.value)}>
-            <option value="">{answers.project ? 'Choose a unit…' : 'Pick the project first'}</option>
-            {(units ?? [])
-              // only what can still be sold — plus the one already noted on the lead
-              .filter((u) => isUnitSellable(u.status) || u.id === lead.interested_unit_id)
-              .map((u) => (
-              <option key={u.id} value={u.id}>
-                {u.code} · {u.unit_type} · {formatBdt(u.base_price)}
               </option>
             ))}
           </SelectInput>

@@ -37,11 +37,11 @@ import {
   type OfferingAvailability,
   type SaleView,
 } from '../domain/share-sale';
-import { addMonths } from '../domain/booking';
+import { addMonths } from '../domain/money';
 import { newId, nextCode, nowIso } from '../utils/id';
 import { formatBdt, todayLocal } from '../utils/format';
 import { BaseRepository } from './base.repository';
-import { customerRepository } from './booking.repository';
+import { customerRepository } from './customer.repository';
 import { normalizePhone } from './lead.repository';
 
 /*

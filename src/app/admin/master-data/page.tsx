@@ -19,7 +19,6 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { DdChecklistEditor } from '@/components/admin/master-data/DdChecklistEditor';
 import { useMockSession } from '@/lib/auth/mock-session';
 import type { LookupValue } from '@/lib/db/types';
 import { DuplicateLookupError, SystemOptionError, lookupRepository } from '@/lib/repositories';
@@ -61,7 +60,6 @@ export default function MasterDataPage() {
 
       {/* BRD DD-001 — not a lookup list, so it gets its own editor above them */}
       <div className="mb-3">
-        <DdChecklistEditor />
       </div>
 
       {groups.length === 0 ? (

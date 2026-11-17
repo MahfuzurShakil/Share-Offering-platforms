@@ -25,7 +25,7 @@ import { Field, SelectInput, TextInput } from '@/components/ui/Field';
 import { WizardStepper, type WizardStep } from '@/components/ui/WizardStepper';
 import { useMockSession } from '@/lib/auth/mock-session';
 import type { Customer, CustomerUpload, ShareSignDraft } from '@/lib/db/types';
-import { addMonths } from '@/lib/domain/booking';
+import { addMonths } from '@/lib/domain/money';
 import { missingToSign, shareDocChecklist } from '@/lib/domain/share-documents';
 import { FREQUENCY_LABEL, buildSchedule, formatSharePct, installmentLabel } from '@/lib/domain/share-sale';
 import { shareSaleRepository, type KycField, type SaleRow } from '@/lib/repositories';

@@ -4,7 +4,6 @@ import Link from 'next/link';
 import { Globe, LayoutGrid, Menu, PanelLeft } from 'lucide-react';
 import { ROLES, useMockSession, type Role } from '@/lib/auth/mock-session';
 import { humanize } from '@/lib/utils/format';
-import { AlertsBell } from './AlertsBell';
 
 /** Design Reference A.2 — logo/collapse and the user chip. */
 export function AdminTopbar({
@@ -77,7 +76,6 @@ export function AdminTopbar({
           <LayoutGrid className="size-5" />
         </Link>
         {/* DIRECT-PURCHASE-PLAN.md B6 — a bell that is live, not decoration */}
-        <AlertsBell />
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-sm font-medium leading-tight text-ink">{userName}</p>

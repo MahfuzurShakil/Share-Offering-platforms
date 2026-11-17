@@ -3,7 +3,7 @@
 import { db } from '../db/database';
 import type { FundAllocation, FundReceipt, Partner } from '../db/types';
 import type { CashFlowRow } from '../domain/cash';
-import { money } from '../domain/procurement';
+import { money } from '../domain/money';
 import { nextCode } from '../utils/id';
 import { formatBdt } from '../utils/format';
 import { BaseRepository, type NewRecord } from './base.repository';
@@ -187,15 +187,13 @@ export interface ProjectFundRow {
   direct_in: number;
   /** given from the company pool */
   allocated: number;
-  /** buyers' payments for this project's units */
+  /** investors' payments for this project's shares */
   collections: number;
   received: number;
-  /** cash out for this project: site payments, expenses, supplier vouchers, refunds */
+  /** cash out for this project: costs paid, loan repayments, profit paid to holders */
   spent: number;
   remaining: number;
-  /** recorded site costs not yet paid */
-  owed: number;
-  /** recorded cost: direct purchases + expenses + supplier vouchers */
+  /** recorded cost: the project's cost entries for the period */
   cost: number;
   /**
    * How much of what was paid out came from the partners' money. A project
@@ -242,37 +240,27 @@ export async function fundOverview(): Promise<FundOverview> {
     receipts,
     allocations,
     projects,
-    towers,
-    units,
-    bookings,
-    payments,
-    refunds,
-    expenses,
-    vouchers,
-    purchases,
-    sitePayments,
+    sales,
+    sharePayments,
+    entries,
+    repayments,
+    withdrawals,
     accounts,
   ] = await Promise.all([
     db.partners.toArray(),
     db.fund_receipts.toArray(),
     db.fund_allocations.toArray(),
     db.projects.toArray(),
-    db.towers.toArray(),
-    db.units.toArray(),
-    db.bookings.toArray(),
-    db.payments.toArray(),
-    db.refunds.toArray(),
-    db.expenses.toArray(),
-    db.supplier_vouchers.toArray(),
-    db.direct_purchases.toArray(),
-    db.direct_purchase_payments.toArray(),
+    db.share_sales.toArray(),
+    db.share_payments.toArray(),
+    db.revenue_entries.toArray(),
+    db.loan_repayments.toArray(),
+    db.profit_withdrawals.toArray(),
     db.bank_accounts.toArray(),
   ]);
   const openingEquity = money(accounts.reduce((s, a) => s + (Number(a.opening_balance) || 0), 0));
 
-  const towerProject = new Map(towers.map((t) => [t.id, t.project_id]));
-  const unitProject = new Map(units.map((u) => [u.id, towerProject.get(u.tower_id)]));
-  const bookingProject = new Map(bookings.map((b) => [b.id, unitProject.get(b.unit_id)]));
+  const saleProject = new Map(sales.map((s) => [s.id, s.project_id]));
   const sum = <T>(rows: T[], f: (r: T) => number) => money(rows.reduce((s, r) => s + (f(r) || 0), 0));
   const active = partners.filter((p) => p.is_active).sort((a, b) => b.share_pct - a.share_pct);
   const companyPartners = active.filter((p) => !p.project_id);
@@ -280,18 +268,27 @@ export async function fundOverview(): Promise<FundOverview> {
   for (const p of projects) {
     const direct_in = sum(receipts.filter((r) => r.project_id === p.id), (r) => r.amount);
     const allocated = sum(allocations.filter((a) => a.project_id === p.id), (a) => a.amount);
-    const collections = sum(payments.filter((x) => bookingProject.get(x.booking_id) === p.id), (x) => x.amount);
-    const spent = money(
-      sum(sitePayments.filter((x) => x.project_id === p.id), (x) => x.amount) +
-        sum(expenses.filter((x) => x.project_id === p.id), (x) => x.amount) +
-        sum(vouchers.filter((x) => x.project_id === p.id), (x) => x.amount) +
-        sum(refunds.filter((x) => bookingProject.get(x.booking_id) === p.id), (x) => x.net_refund),
+    const collections = sum(
+      sharePayments.filter((x) => saleProject.get(x.sale_id) === p.id),
+      (x) => x.amount,
     );
-    const mine = purchases.filter((x) => x.project_id === p.id);
-    const cost = money(
-      sum(mine, (x) => x.amount) +
-        sum(expenses.filter((x) => x.project_id === p.id), (x) => x.amount) +
-        sum(vouchers.filter((x) => x.project_id === p.id), (x) => x.amount),
+    /*
+     * What this project has paid out. Phase 1's money out is its own running
+     * cost, the loans it is repaying, and the profit already handed to the
+     * people who hold it — not site payments and supplier bills, which belong
+     * to the construction build.
+     */
+    const cost = sum(
+      entries.filter((x) => x.project_id === p.id && x.direction === 'cost'),
+      (x) => x.amount,
+    );
+    const spent = money(
+      cost +
+        sum(repayments.filter((x) => x.project_id === p.id), (x) => x.principal + x.interest) +
+        sum(
+          withdrawals.filter((x) => x.project_id === p.id && x.status === 'paid'),
+          (x) => x.amount,
+        ),
     );
     const received = money(direct_in + allocated + collections);
     const partnerIn =
@@ -312,7 +309,6 @@ export async function fundOverview(): Promise<FundOverview> {
       received,
       spent,
       remaining: money(received - spent),
-      owed: sum(mine, (x) => x.amount - (x.paid_amount || 0)),
       cost,
       partners_used,
       shares: splitProject(p.id, partners),
@@ -321,7 +317,10 @@ export async function fundOverview(): Promise<FundOverview> {
   rows.sort((a, b) => b.cost - a.cost);
 
   // company-level cost (no project) is shared by the company split
-  const companyCost = sum(expenses.filter((x) => !x.project_id), (x) => x.amount);
+  const companyCost = sum(
+    entries.filter((x) => !x.project_id && x.direction === 'cost'),
+    (x) => x.amount,
+  );
   const capital = sum(receipts.filter((r) => r.source_type === 'partner_capital'), (r) => r.amount);
   // the company's partners' capital, which their company shares are measured against
   const companyCapital = sum(
@@ -380,7 +379,7 @@ export async function fundOverview(): Promise<FundOverview> {
       capital,
       loans: sum(receipts.filter((r) => r.source_type === 'loan'), (r) => r.amount),
       other: sum(receipts.filter((r) => r.source_type === 'other'), (r) => r.amount),
-      collections: sum(payments, (x) => x.amount),
+      collections: sum(sharePayments, (x) => x.amount),
       spent: money(rows.reduce((s, r) => s + r.spent, 0)),
       cost: money(rows.reduce((s, r) => s + r.cost, 0) + companyCost),
     },

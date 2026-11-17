@@ -10,7 +10,7 @@ import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/component
 import { useMockSession } from '@/lib/auth/mock-session';
 import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency, type ShareOffering } from '@/lib/db/types';
 import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct, offeringMath } from '@/lib/domain/share-sale';
-import { projectRepository, projectStatement, shareOfferingRepository } from '@/lib/repositories';
+import { projectRepository, shareOfferingRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
@@ -102,7 +102,6 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
   };
 
   const projects = useLiveQuery(() => projectRepository.list(), []);
-  const statement = useLiveQuery(() => (d.project_id ? projectStatement(d.project_id) : Promise.resolve(null)), [d.project_id]);
   const free = useLiveQuery(() => (d.project_id ? shareOfferingRepository.freePct(d.project_id, offering?.id) : Promise.resolve(100)), [d.project_id, offering?.id]);
 
   const nav = Number(d.net_asset_value) || 0;
@@ -179,20 +178,19 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
                 ))}
               </SelectInput>
             </Field>
+            {/*
+              The prototype offered "book cost to date" from the construction
+              cost sheet as a starting point for NAV. This build records no
+              construction cost, and a project's running cost is not what it is
+              worth, so the valuation is typed — it is a judgement the owner
+              makes, not a number the system can infer.
+            */}
             <Field
               label="Net asset value (NAV)"
               required
-              hint={statement ? undefined : 'What the project’s land, building and other assets are worth, less what it owes.'}
+              hint="What the project’s land, building and other assets are worth, less what it owes."
             >
               <MoneyInput value={d.net_asset_value} onChange={(e) => set('net_asset_value', e.target.value)} placeholder="e.g. 900000000" />
-              {statement && statement.cost.total > 0 && (
-                <span className="mt-1 flex flex-wrap items-center gap-x-2 text-xs text-ink-muted">
-                  Book cost to date {formatBdt(statement.cost.total)}
-                  <button type="button" className="font-semibold text-admin-700 hover:underline" onClick={() => set('net_asset_value', String(Math.round(statement.cost.total)))}>
-                    Use as NAV
-                  </button>
-                </span>
-              )}
             </Field>
             <Field label="Premium over NAV" hint="Brand, location, expected income — what the owner adds on top of NAV.">
               <div className="flex items-start gap-2">

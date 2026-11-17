@@ -2,15 +2,17 @@
 
 import { createContext, useContext, useEffect, useState, type ReactNode } from 'react';
 import { getDb } from './database';
-import { seedIfEmpty } from './seed';
 
 type DbStatus = 'loading' | 'ready' | 'error';
 
 const DatabaseContext = createContext<{ status: DbStatus; error?: string }>({ status: 'loading' });
 
 /**
- * Opens the shared IndexedDB once per browser session and seeds master data.
- * Wraps both the Admin and the Public tree, so both portals talk to the same DB.
+ * Opens the shared IndexedDB once per browser session.
+ *
+ * TEMPORARY: this whole file goes away when the Postgres data layer lands.
+ * Reference data now comes from `prisma/seed/01-lookups.ts` and demo data from
+ * `scripts/demo/*` over the real REST API, so nothing is seeded in the browser.
  */
 export function DatabaseProvider({ children }: { children: ReactNode }) {
   const [state, setState] = useState<{ status: DbStatus; error?: string }>({ status: 'loading' });
@@ -20,7 +22,6 @@ export function DatabaseProvider({ children }: { children: ReactNode }) {
     (async () => {
       try {
         await getDb().open();
-        await seedIfEmpty();
         if (!cancelled) setState({ status: 'ready' });
       } catch (err) {
         if (!cancelled) setState({ status: 'error', error: (err as Error).message });

@@ -245,34 +245,27 @@ interface Loaded {
   pointByProject: Map<string, { lat: number; lng: number }>;
 }
 
-/** One read of the three tables, shared by every card on the listing. */
+/**
+ * One read of the tables every card on the listing needs.
+ *
+ * PHASE 1: a project's inventory (towers and units) and its land belong to the
+ * modules this build does not carry, so those maps are empty and every figure
+ * derived from them reads as "not published". The public site's own numbers —
+ * price per share, lot size, how much of a round is left — come from the share
+ * offering instead, and are wired up in the public-website stage (S5).
+ */
 async function loadFor(projectIds: string[]): Promise<Loaded> {
   const ids = new Set(projectIds);
-  const towers = (await db.towers.toArray()).filter((t) => ids.has(t.project_id));
-  const towerIds = new Set(towers.map((t) => t.id));
-  const [units, docs] = await Promise.all([
-    db.units.toArray().then((rows) => rows.filter((u) => towerIds.has(u.tower_id))),
-    db.documents.where('entity_type').equals('project').toArray(),
-  ]);
+  const docs = await db.documents.where('entity_type').equals('project').toArray();
 
   const towersByProject = new Map<string, Tower[]>();
-  for (const t of towers) towersByProject.set(t.project_id, [...(towersByProject.get(t.project_id) ?? []), t]);
   const unitsByTower = new Map<string, Unit[]>();
-  for (const u of units) unitsByTower.set(u.tower_id, [...(unitsByTower.get(u.tower_id) ?? []), u]);
   const docsByProject = new Map<string, DocumentRecord[]>();
   for (const d of docs) {
     if (!ids.has(d.entity_id)) continue;
     docsByProject.set(d.entity_id, [...(docsByProject.get(d.entity_id) ?? []), d]);
   }
   const pointByProject = new Map<string, { lat: number; lng: number }>();
-  const mappings = (await db.land_project_mapping.toArray()).filter((m) => ids.has(m.project_id));
-  const lands = new Map((await db.lands.bulkGet([...new Set(mappings.map((m) => m.land_id))])).filter((l) => !!l).map((l) => [l!.id, l!]));
-  for (const m of mappings) {
-    const land = lands.get(m.land_id);
-    if (!pointByProject.has(m.project_id) && land?.gps_lat != null && land.gps_lng != null) {
-      pointByProject.set(m.project_id, { lat: land.gps_lat, lng: land.gps_lng });
-    }
-  }
   return { towersByProject, unitsByTower, docsByProject, pointByProject };
 }
 
@@ -417,13 +410,15 @@ export async function websiteReadiness(projectId: string): Promise<WebsiteReadin
   const project = await db.projects.get(projectId);
   if (!project) return [];
   const loaded = await loadFor([project.id]);
+  const offerings = await db.share_offerings.toArray();
   const docs = loaded.docsByProject.get(project.id) ?? [];
   const publicDocs = docs.filter((d) => d.is_public);
   return [
     { key: 'cover', ok: coverFor(project, docs) !== null, optional: false },
     { key: 'location', ok: !!project.location_summary?.trim(), optional: false },
     { key: 'gallery', ok: publicDocs.some((d) => d.document_type === 'gallery_image' && isPicture(d)), optional: false },
-    { key: 'priced_unit', ok: minPrice(shownUnits(project, loaded)) !== null, optional: false },
+    // PHASE 1: what the website prices is the share, so the check is the round
+    { key: 'priced_unit', ok: offerings.some((o) => o.project_id === project.id && o.price_per_share > 0 && o.status !== 'draft' && o.status !== 'cancelled'), optional: false },
     { key: 'brochure', ok: publicDocs.some((d) => d.document_type === 'brochure'), optional: true },
   ];
 }
@@ -511,11 +506,10 @@ export const publicProjectRepository = {
         .sort(byFloorThenCode),
     }));
 
-    // v2.0 §3.5 — only two land facts cross over: where it is, and the road it fronts
-    const mappings = await db.land_project_mapping.where('project_id').equals(project.id).toArray();
-    const lands = (await db.lands.bulkGet(mappings.map((m) => m.land_id))).filter((l) => !!l);
-    const located = lands.find((l) => l.gps_lat != null && l.gps_lng != null);
-    const roads = lands.map((l) => l.front_road_width_ft ?? 0).filter((n) => n > 0);
+    // v2.0 §3.5 — two land facts used to cross over, where it is and the road it
+    // fronts; both come from the Land module, which returns in Phase 2
+    const located = null as { gps_lat: number; gps_lng: number } | null;
+    const roads: number[] = [];
 
     const progressValues = containers.map((c) => c.progress_pct).filter((n): n is number => n !== null);
     const brochure = docs
@@ -538,7 +532,7 @@ export const publicProjectRepository = {
           ? `${Number(project.total_land_area.toFixed(2))} ${project.total_land_area_unit ?? 'katha'}`
           : null,
       front_road_ft: roads.length ? Math.max(...roads) : null,
-      map_url: located ? mapLink(located.gps_lat!, located.gps_lng!) : null,
+      map_url: located ? mapLink(located.gps_lat, located.gps_lng) : null,
       construction_planned: shape.item === 'share' && project.construction_after_sale === 'planned',
       containers,
       unit_types: unitTypeSummaries(shownUnits(project, loaded), shape),
@@ -550,10 +544,9 @@ export const publicProjectRepository = {
       floor_plans: docs
         .filter((d) => d.document_type === 'layout_floor_plan' || d.document_type === 'layout_plan')
         .map(toDownload),
-      payment_plan: (await db.installment_plan_templates.where('project_id').equals(project.id).toArray())
-        .sort((a, b) => a.sequence_no - b.sequence_no)
-        .filter((s) => s.percentage > 0)
-        .map((s) => ({ label: s.label, percentage: s.percentage, schedule: s.schedule_type, month_count: s.month_count ?? null })),
+      // PHASE 1: the terms an investor pays on are the offering's (down payment,
+      // instalment count and frequency), published with the round in S5
+      payment_plan: [],
       // an Upcoming project has not started, so a 0% section would only look like a stall
       progress_pct: built && progressValues.length && publicStage(project.status, shape) !== 'upcoming'
         ? Math.round(progressValues.reduce((s, n) => s + n, 0) / progressValues.length)

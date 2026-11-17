@@ -18,16 +18,15 @@ const STATE_META: Record<FundState, { label: string; tone: BadgeTone }> = {
   over: { label: 'Overspent', tone: 'red' },
 };
 
-/** Overspent: paid out more than came in. Low: what is left cannot clear the unpaid bills. */
+/** Overspent: paid out more than came in. */
 function fundState(r: ProjectFundRow): FundState {
   if (r.remaining < 0) return 'over';
-  if (r.owed > 0 && r.remaining < r.owed) return 'low';
   return 'ok';
 }
 
 /**
  * One row per project with the four numbers that matter — received, paid
- * out, left, still owed — and a plain verdict. Where the money came from and
+ * out and left — and a plain verdict. Where the money came from and
  * who carries the project open under the row, for whoever wants them.
  */
 export function ProjectFundTable({
@@ -77,7 +76,6 @@ export function ProjectFundTable({
               <th className="py-2.5 pr-3 text-right font-medium">Received</th>
               <th className="py-2.5 pr-3 text-right font-medium">Paid out</th>
               <th className="py-2.5 pr-3 text-right font-medium">Left</th>
-              <th className="py-2.5 pr-3 text-right font-medium">Bills unpaid</th>
               <th className="py-2.5 pr-3 font-medium">Status</th>
               <th className="w-8" />
             </tr>
@@ -125,7 +123,6 @@ export function ProjectFundTable({
                     >
                       {formatBdt(r.remaining)}
                     </td>
-                    <td className="py-3 pr-3 text-right tabular-nums">{r.owed > 0 ? formatBdt(r.owed) : '—'}</td>
                     <td className="py-3 pr-3">
                       <Badge tone={s.tone}>{s.label}</Badge>
                     </td>
@@ -142,13 +139,12 @@ export function ProjectFundTable({
                           <Detail title="Where its money came from">
                             <Line label="Put in directly" value={r.direct_in} />
                             <Line label="Given from company pool" value={r.allocated} />
-                            <Line label="Buyers paid" value={r.collections} />
+                            <Line label="Investors paid" value={r.collections} />
                             <Line label="Total received" value={r.received} strong />
                           </Detail>
                           <Detail title="Where it went">
                             <Line label="Paid out" value={r.spent} />
                             <Line label="Cost recorded" value={r.cost} />
-                            <Line label="Bills not yet paid" value={r.owed} />
                             <Line label="Left in hand" value={r.remaining} strong warn={r.remaining < 0} />
                           </Detail>
                           <Detail title="Who owns this project">
@@ -186,7 +182,6 @@ export function ProjectFundTable({
                 <td className="py-3 pr-3 text-right tabular-nums">{formatBdt(total((r) => r.received))}</td>
                 <td className="py-3 pr-3 text-right tabular-nums">{formatBdt(total((r) => r.spent))}</td>
                 <td className="py-3 pr-3 text-right tabular-nums">{formatBdt(total((r) => r.remaining))}</td>
-                <td className="py-3 pr-3 text-right tabular-nums">{formatBdt(total((r) => r.owed))}</td>
                 <td colSpan={2} />
               </tr>
             </tfoot>

@@ -3,7 +3,6 @@ import { db } from '../../db/database';
 import { publicBlogRepository } from './blog.public.repository';
 import { publicContentRepository } from './content.public.repository';
 import { publicInquiryRepository } from './inquiry.public.repository';
-import { progressPublicRepository } from './progress.public.repository';
 import { publicProjectRepository } from './project.public.repository';
 
 /*
@@ -19,7 +18,6 @@ const probe = { leak_probe: 'LEAK-new-column' };
 const NOW = '2026-01-01T00:00:00.000Z';
 const base = (id: string) => ({ id, created_at: NOW, updated_at: NOW, created_by: 'LEAK-creator', ...probe });
 
-const AVAILABLE_PRICE = 5_250_000;
 
 // rows are cast: they carry columns the types do not know about, on purpose
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -72,42 +70,6 @@ async function seed(showPrices: boolean) {
   const notOpen = { ...project, id: 'p3', code: 'PRJ-2026-003', name: 'LEAK-not-open', sales_status: 'not_open' };
   await db.projects.bulkAdd(rows([project, hidden, notOpen]));
 
-  await db.towers.bulkAdd(rows([
-    { ...base('t1'), project_id: 'p1', name: 'Tower A', floor_count: 10, status: 'under_construction', current_progress_pct: 40 },
-    { ...base('t2'), project_id: 'p2', name: 'LEAK-hidden-tower', floor_count: 5, status: 'planning' },
-  ]));
-
-  const unit = { tower_id: 't1', floor: 3, unit_type: '3 Bed', bedroom_count: 3, size_sqft: 1450, for_sale_by: 'company', parking_allocated: 'LEAK-parking', allocation_type: 'LEAK-allocation' };
-  await db.units.bulkAdd(rows([
-    { ...base('u1'), ...unit, code: 'A-3', status: 'available', base_price: AVAILABLE_PRICE },
-    { ...base('u2'), ...unit, code: 'B-3', status: 'booked', base_price: 777002 },
-    { ...base('u3'), ...unit, code: 'C-3', status: 'available', base_price: 777003, for_sale_by: 'owner_direct', allocated_to_owner_id: 'LEAK-owner' },
-    { ...base('u4'), ...unit, code: 'LEAK-draft-unit', status: 'draft', base_price: 777004 },
-    { ...base('u5'), ...unit, tower_id: 't2', code: 'LEAK-hidden-unit', status: 'available', base_price: 777005 },
-  ]));
-
-  await db.lands.bulkAdd(rows([{
-    ...base('l1'),
-    code: 'LND-2026-001',
-    name: 'LEAK-land-name',
-    location_division: 'Dhaka',
-    location_district: 'Dhaka',
-    location_area: 'LEAK-area',
-    mouza: 'LEAK-mouza',
-    dag_number: 'LEAK-dag',
-    land_size: 10,
-    land_size_unit: 'katha',
-    asking_price: 777006,
-    final_agreed_amount: 777007,
-    gps_lat: 23.8,
-    gps_lng: 90.4,
-    front_road_width_ft: 40,
-    acquisition_type: 'joint_venture',
-    status: 'acquired',
-    remarks: 'LEAK-remarks',
-  }]));
-  await db.land_project_mapping.bulkAdd(rows([{ ...base('m1'), land_id: 'l1', project_id: 'p1' }]));
-
   const doc = { entity_type: 'project', entity_id: 'p1', uploaded_by: 'LEAK-uploader', uploaded_at: NOW, notes: 'LEAK-doc-notes' };
   await db.documents.bulkAdd(rows([
     { ...base('d1'), ...doc, document_type: 'gallery_image', file_url: 'https://img.example.test/g1.jpg', is_public: true },
@@ -115,10 +77,6 @@ async function seed(showPrices: boolean) {
     { ...base('d3'), ...doc, document_type: 'brochure', file_url: 'https://files.example.test/LEAK-private.pdf', file_name: 'LEAK-private.pdf', is_public: false, uploaded_at: '2026-06-01T00:00:00.000Z' },
     { ...base('d4'), ...doc, document_type: 'gallery_image', file_url: 'https://img.example.test/LEAK-private.jpg', is_public: false },
   ]));
-  await db.installment_plan_templates.bulkAdd(rows([
-    { ...base('ip1'), project_id: 'p1', sequence_no: 1, label: 'On booking', percentage: 20, schedule_type: 'on_booking' },
-  ]));
-
   await db.blog_posts.bulkAdd(rows([
     { ...base('b1'), slug: 'buying-guide', title: 'Buying guide', excerpt: 'How to buy', content: 'One.\n\nTwo.', author_id: 'author', status: 'published', published_at: '2026-01-01' },
     { ...base('b2'), slug: 'draft-post', title: 'LEAK-draft', excerpt: 'x', content: 'x', status: 'draft', published_at: null },
@@ -159,9 +117,6 @@ async function everything() {
     faqs: await publicContentRepository.faqs(),
     posts: await publicBlogRepository.list(),
     post: await publicBlogRepository.detail('buying-guide'),
-    towers: await progressPublicRepository.towerProgressForProject('p1'),
-    photos: await progressPublicRepository.photoFeed(),
-    progress: await progressPublicRepository.projectProgressPct('p1'),
   };
 }
 
@@ -175,16 +130,9 @@ describe('public repositories whitelist', () => {
       const out = await everything();
       // the seed is really being read, so an empty result cannot pass by accident
       expect(out.list.map((c) => c.code)).toEqual(['PRJ-2026-001']);
-      expect(out.detail?.containers[0].units.map((u) => u.code).sort()).toEqual(['A-3', 'B-3', 'C-3']);
       expect(out.posts.map((p) => p.slug)).toEqual(['buying-guide']);
       expect(out.post?.author).toBe('Rahim Writer');
       expect(text(out)).not.toMatch(LEAK);
-    });
-
-    it('prices only units the company still has for sale', async () => {
-      const units = (await publicProjectRepository.detail('PRJ-2026-001'))!.containers[0].units;
-      const price = Object.fromEntries(units.map((u) => [u.code, u.price]));
-      expect(price).toEqual({ 'A-3': AVAILABLE_PRICE, 'B-3': null, 'C-3': null });
     });
 
     it('answers an unpublished or not-open project and an unpublished post like a missing one', async () => {
@@ -203,7 +151,6 @@ describe('public repositories whitelist', () => {
       const out = await everything();
       expect(out.detail).not.toBeNull();
       expect(text(out)).not.toMatch(LEAK);
-      expect(text(out)).not.toContain(String(AVAILABLE_PRICE));
       expect(out.detail!.payment_plan).toEqual([]);
       // a budget filter would reveal prices by what it drops, so it is ignored
       const filtered = await publicProjectRepository.list({ price_bands: ['above_3cr'] });

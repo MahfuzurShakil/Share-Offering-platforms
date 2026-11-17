@@ -13,7 +13,6 @@ import { BuyingProcess } from '@/components/public/home/BuyingProcess';
 import { HeroSearch, BUYER_KINDS } from '@/components/public/home/HeroSearch';
 import { HeroSlider } from '@/components/public/home/HeroSlider';
 import { InstalmentPlanner } from '@/components/public/home/InstalmentPlanner';
-import { SiteStrip } from '@/components/public/home/SiteStrip';
 import { Testimonials } from '@/components/public/home/Testimonials';
 import { BlogCard } from '@/components/public/blog/BlogCard';
 import { publicBlogRepository } from '@/lib/repositories/public/blog.public.repository';
@@ -175,7 +174,6 @@ export default function HomePage() {
       )}
 
       {/* live site photos */}
-      <SiteStrip />
 
       {/* why us */}
       <Container className="mt-24 grid items-center gap-14 md:mt-28 lg:grid-cols-2">
@@ -262,18 +260,6 @@ export default function HomePage() {
             </div>
           </div>
         </div>
-      </Container>
-
-      {/* landowners — the full page and offer form are at /landowners */}
-      <Container className="mt-24 md:mt-28">
-        <Reveal>
-          <div className="flex flex-col items-start justify-between gap-8 rounded-[28px] border border-site-line bg-white p-8 shadow-site-1 md:flex-row md:items-center md:p-12">
-            <SectionHeader eyebrow={h.landowner.eyebrow} title={h.landowner.title} accent={h.landowner.accent} lead={h.landowner.lead} />
-            <ButtonLink href="/landowners" size="lg" iconRight={<ArrowRight className="size-4.5" />}>
-              {h.landowner.cta}
-            </ButtonLink>
-          </div>
-        </Reveal>
       </Container>
 
       {/* latest news (§7.1 item 14) — hidden until a post is published */}

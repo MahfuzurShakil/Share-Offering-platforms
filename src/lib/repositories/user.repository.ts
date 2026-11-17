@@ -190,24 +190,20 @@ class UserRepository extends BaseRepository<User> {
    * account is deactivated instead.
    */
   async referenceCounts(id: string): Promise<{ total: number; detail: string[] }> {
-    const [leads, bookings, updates, requests, payments, expenses] = await Promise.all([
+    const [leads, periods, members, assignments] = await Promise.all([
       db.leads.where('assigned_to').equals(id).count(),
-      db.bookings.where('booked_by').equals(id).count(),
-      db.site_progress_updates.where('updated_by').equals(id).count(),
-      db.material_requests.where('requested_by').equals(id).count(),
-      db.payments.where('received_by').equals(id).count(),
-      db.expenses.where('paid_by').equals(id).count(),
+      db.revenue_periods.toArray().then((rows) => rows.filter((r) => r.approved_by === id || r.declared_by === id).length),
+      db.org_members.where('user_id').equals(id).count(),
+      db.user_project_assignments.where('user_id').equals(id).count(),
     ]);
 
     const detail: string[] = [];
     if (leads) detail.push(`${leads} lead${leads === 1 ? '' : 's'}`);
-    if (bookings) detail.push(`${bookings} booking${bookings === 1 ? '' : 's'}`);
-    if (updates) detail.push(`${updates} progress update${updates === 1 ? '' : 's'}`);
-    if (requests) detail.push(`${requests} material request${requests === 1 ? '' : 's'}`);
-    if (payments) detail.push(`${payments} payment${payments === 1 ? '' : 's'}`);
-    if (expenses) detail.push(`${expenses} expense${expenses === 1 ? '' : 's'}`);
+    if (periods) detail.push(`${periods} profit period${periods === 1 ? '' : 's'} they approved or declared`);
+    if (members) detail.push(`a place in the sales organisation`);
+    if (assignments) detail.push(`${assignments} project assignment${assignments === 1 ? '' : 's'}`);
 
-    return { total: leads + bookings + updates + requests + payments + expenses, detail };
+    return { total: leads + periods + members + assignments, detail };
   }
 
   async removeCascade(id: string): Promise<void> {

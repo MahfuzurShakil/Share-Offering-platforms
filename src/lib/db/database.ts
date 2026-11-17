@@ -1,1090 +1,172 @@
 'use client';
 
 import Dexie, { type EntityTable } from 'dexie';
-import { backfillMaterialItems } from './backfill-material-items';
-import { allocateBookingPayments, bookingFeeRule, bookingScheduleRows, paidOffOn } from '../domain/booking';
-import { newId } from '../utils/id';
 import type {
+  Award,
+  BankAccount,
+  BlogPost,
+  CommissionLine,
+  CommissionPayout,
+  CommissionPlan,
+  CompanySettings,
+  Customer,
+  CustomerUpload,
+  CustomerUploadFile,
+  DocumentRecord,
+  FaqItem,
+  FundAllocation,
+  FundReceipt,
+  Lead,
+  LeadActivity,
   Loan,
   LoanRepayment,
+  LookupValue,
   LossCovering,
+  OrgMember,
+  OrgMove,
+  Partner,
+  PaymentSubmission,
   ProfitAllocation,
   ProfitWithdrawal,
+  Project,
+  ProjectPartner,
   RevenueEntry,
   RevenuePeriod,
   RevenuePolicy,
-  BookingInstallment,
-  Award,
-  BlogPost,
   ShareInstallment,
   ShareOffering,
   SharePayment,
   ShareRequest,
-  CustomerUpload,
-  CustomerUploadFile,
-  PaymentSubmission,
   ShareSale,
-  LandOffer,
-  FaqItem,
   TeamMember,
   Testimonial,
-  BankAccount,
-  Booking,
-  CompanySettings,
-  Customer,
-  DiscountApprovalRule,
-  InstallmentPlanTemplate,
-  DocumentRecord,
-  Land,
-  LandJvDetails,
-  LandOwnerMapping,
-  LandProjectMapping,
-  DdChecklistItem,
-  LandAcquisitionCost,
-  LandDevelopmentActivity,
-  LandDevelopmentProgress,
-  LandNegotiation,
-  LandDdItem,
-  LandFeasibility,
-  LandStatusEvent,
-  Landowner,
-  Lead,
-  LeadActivity,
-  LookupValue,
-  MaterialRequest,
-  MaterialItem,
-  MaterialRequestItem,
-  MaterialRequestStatusEvent,
-  Payment,
-  GoodsReceipt,
-  GoodsReceiptItem,
-  PurchaseOrder,
-  PurchaseOrderItem,
-  StockConsumption,
-  StockIssue,
-  StockReturn,
-  StockWriteOff,
-  StockRow,
-  StockTransfer,
-  Supplier,
-  SupplierBill,
-  SupplierBillItem,
-  SupplierVoucher,
-  Expense,
-  PaymentInstallment,
-  PaymentSchedule,
-  Refund,
-  UserProjectAssignment,
-  SiteProgressUpdate,
-  SiteVisit,
-  TowerWorkItem,
-  Project,
-  ProjectBudgetLine,
-  ProjectStatusEvent,
-  UnitDelivery,
-  Tower,
-  WorkItemBudgetLine,
-  DirectPurchase,
-  DirectPurchasePayment,
-  Partner,
-  ProjectPartner,
-  FundReceipt,
-  FundAllocation,
-  Unit,
   User,
-  OrgMember,
-  OrgMove,
-  CommissionPlan,
-  CommissionLine,
-  CommissionPayout,
+  UserProjectAssignment,
 } from './types';
 
 /**
- * Single Dexie instance shared by BOTH portals.
+ * The shared IndexedDB behind both portals — INTERIM.
  *
- * Public Portal (Public-Portal_v1.md, Section 0 "Architecture Decision") and
- * Admin Portal live in the same Next.js app and read the same IndexedDB
- * database, so data entered in /admin shows up on the public site instantly.
+ * This is the share-sale build's starting point, not its data layer: the
+ * platform moves to PostgreSQL + Prisma behind `/api/v1`, and this file goes
+ * away with the last `useLiveQuery` call site. Until then the UI keeps running
+ * against the same repository API it always used.
+ *
+ * It is one `version(1)` on purpose. The prototype carries 49 version blocks
+ * because it has installs to upgrade; this product has none, so the schema
+ * below is the prototype's 49 blocks already merged, with the land,
+ * construction, procurement and flat-sale tables left out.
+ *
  * Public routes must never touch this object directly — they go through
  * `lib/repositories/public/*`, which whitelists fields.
  */
-export class AppDatabase extends Dexie {
-  // Section 1 — shared tables
+class AppDatabase extends Dexie {
   documents!: EntityTable<DocumentRecord, 'id'>;
+
   lookup_values!: EntityTable<LookupValue, 'id'>;
+
   company_settings!: EntityTable<CompanySettings, 'id'>;
 
-  // Module 1 — Land Management
-  lands!: EntityTable<Land, 'id'>;
-  landowners!: EntityTable<Landowner, 'id'>;
-  land_owner_mapping!: EntityTable<LandOwnerMapping, 'id'>;
-  land_jv_details!: EntityTable<LandJvDetails, 'id'>;
-  land_status_history!: EntityTable<LandStatusEvent, 'id'>;
-  // batch L2 — BRD section 8
-  site_visits!: EntityTable<SiteVisit, 'id'>;
-  land_feasibility!: EntityTable<LandFeasibility, 'id'>;
-  // batch L3 — BRD section 9
-  dd_checklist_items!: EntityTable<DdChecklistItem, 'id'>;
-  land_dd_items!: EntityTable<LandDdItem, 'id'>;
-  // batch L4 — BRD section 10
-  land_negotiations!: EntityTable<LandNegotiation, 'id'>;
-  land_acquisition_costs!: EntityTable<LandAcquisitionCost, 'id'>;
-  // batch L6 — BRD section 11
-  land_development_activities!: EntityTable<LandDevelopmentActivity, 'id'>;
-  land_development_progress!: EntityTable<LandDevelopmentProgress, 'id'>;
-
-  // Module 2 — Project Creation
   projects!: EntityTable<Project, 'id'>;
-  land_project_mapping!: EntityTable<LandProjectMapping, 'id'>;
-  towers!: EntityTable<Tower, 'id'>;
-  project_status_history!: EntityTable<ProjectStatusEvent, 'id'>;
-  unit_deliveries!: EntityTable<UnitDelivery, 'id'>;
-  units!: EntityTable<Unit, 'id'>;
 
-  // Users (Section 9.4) — Module 8 owns the UI, Module 3 needs the rows
   users!: EntityTable<User, 'id'>;
 
-  // Module 3 — Sales / Lead / CRM
-  leads!: EntityTable<Lead, 'id'>;
-  lead_activities!: EntityTable<LeadActivity, 'id'>;
-
-  // Module 4 — Booking & Customer
-  customers!: EntityTable<Customer, 'id'>;
-  bookings!: EntityTable<Booking, 'id'>;
-  discount_approval_rules!: EntityTable<DiscountApprovalRule, 'id'>;
-
-  // Finance — money capture, brought forward from Module 7 (Section 8.2)
-  payments!: EntityTable<Payment, 'id'>;
-  installment_plan_templates!: EntityTable<InstallmentPlanTemplate, 'id'>;
-
-  // Module 5 — Site Progress Update
-  tower_work_items!: EntityTable<TowerWorkItem, 'id'>;
-  site_progress_updates!: EntityTable<SiteProgressUpdate, 'id'>;
-  material_requests!: EntityTable<MaterialRequest, 'id'>;
-  bank_accounts!: EntityTable<BankAccount, 'id'>;
-  material_items!: EntityTable<MaterialItem, 'id'>;
-  project_budget_lines!: EntityTable<ProjectBudgetLine, 'id'>;
-  material_request_items!: EntityTable<MaterialRequestItem, 'id'>;
-  material_request_status_history!: EntityTable<MaterialRequestStatusEvent, 'id'>;
-
-  // Module 6 — Procurement & Supplier Voucher
-  suppliers!: EntityTable<Supplier, 'id'>;
-  purchase_orders!: EntityTable<PurchaseOrder, 'id'>;
-  purchase_order_items!: EntityTable<PurchaseOrderItem, 'id'>;
-  goods_receipts!: EntityTable<GoodsReceipt, 'id'>;
-  goods_receipt_items!: EntityTable<GoodsReceiptItem, 'id'>;
-  stock!: EntityTable<StockRow, 'id'>;
-  stock_issues!: EntityTable<StockIssue, 'id'>;
-  stock_consumptions!: EntityTable<StockConsumption, 'id'>;
-  stock_returns!: EntityTable<StockReturn, 'id'>;
-  stock_write_offs!: EntityTable<StockWriteOff, 'id'>;
-  stock_transfers!: EntityTable<StockTransfer, 'id'>;
-  supplier_vouchers!: EntityTable<SupplierVoucher, 'id'>;
-  supplier_bills!: EntityTable<SupplierBill, 'id'>;
-  supplier_bill_items!: EntityTable<SupplierBillItem, 'id'>;
-
-  // Module 7 — Finance
-  payment_schedules!: EntityTable<PaymentSchedule, 'id'>;
-  payment_installments!: EntityTable<PaymentInstallment, 'id'>;
-  refunds!: EntityTable<Refund, 'id'>;
-  expenses!: EntityTable<Expense, 'id'>;
-  work_item_budget_lines!: EntityTable<WorkItemBudgetLine, 'id'>;
-  direct_purchases!: EntityTable<DirectPurchase, 'id'>;
-  direct_purchase_payments!: EntityTable<DirectPurchasePayment, 'id'>;
-  partners!: EntityTable<Partner, 'id'>;
-  project_partners!: EntityTable<ProjectPartner, 'id'>;
-  fund_receipts!: EntityTable<FundReceipt, 'id'>;
-  fund_allocations!: EntityTable<FundAllocation, 'id'>;
-
-  // Module 8 — User & Role Management
   user_project_assignments!: EntityTable<UserProjectAssignment, 'id'>;
 
-  // Public website content (W7)
-  testimonials!: EntityTable<Testimonial, 'id'>;
-  team_members!: EntityTable<TeamMember, 'id'>;
-  awards!: EntityTable<Award, 'id'>;
-  faq_items!: EntityTable<FaqItem, 'id'>;
-  land_offers!: EntityTable<LandOffer, 'id'>;
-  blog_posts!: EntityTable<BlogPost, 'id'>;
+  leads!: EntityTable<Lead, 'id'>;
 
-  // Share Sale (PROJECT-SHARE-SALE-PLAN.md) — v43
+  lead_activities!: EntityTable<LeadActivity, 'id'>;
+
+  customers!: EntityTable<Customer, 'id'>;
+
+  bank_accounts!: EntityTable<BankAccount, 'id'>;
+
+  partners!: EntityTable<Partner, 'id'>;
+
+  project_partners!: EntityTable<ProjectPartner, 'id'>;
+
+  fund_receipts!: EntityTable<FundReceipt, 'id'>;
+
+  fund_allocations!: EntityTable<FundAllocation, 'id'>;
+
   share_offerings!: EntityTable<ShareOffering, 'id'>;
+
   share_sales!: EntityTable<ShareSale, 'id'>;
+
   share_installments!: EntityTable<ShareInstallment, 'id'>;
 
-  // Revenue Share (REVENUE-SHARE-PLAN.md) — v48
-  revenue_policies!: EntityTable<RevenuePolicy, 'id'>;
-  revenue_entries!: EntityTable<RevenueEntry, 'id'>;
-  revenue_periods!: EntityTable<RevenuePeriod, 'id'>;
-  loss_coverings!: EntityTable<LossCovering, 'id'>;
-  loans!: EntityTable<Loan, 'id'>;
-  loan_repayments!: EntityTable<LoanRepayment, 'id'>;
-  profit_allocations!: EntityTable<ProfitAllocation, 'id'>;
-  profit_withdrawals!: EntityTable<ProfitWithdrawal, 'id'>;
   share_payments!: EntityTable<SharePayment, 'id'>;
-  share_requests!: EntityTable<ShareRequest, 'id'>;
-  customer_uploads!: EntityTable<CustomerUpload, 'id'>;
-  customer_upload_files!: EntityTable<CustomerUploadFile, 'id'>;
-  payment_submissions!: EntityTable<PaymentSubmission, 'id'>;
-  booking_installments!: EntityTable<BookingInstallment, 'id'>;
 
-  // Sales Team (REVENUE-SHARE-PLAN.md §6–7) — v49
+  share_requests!: EntityTable<ShareRequest, 'id'>;
+
+  customer_uploads!: EntityTable<CustomerUpload, 'id'>;
+
+  customer_upload_files!: EntityTable<CustomerUploadFile, 'id'>;
+
+  payment_submissions!: EntityTable<PaymentSubmission, 'id'>;
+
+  revenue_policies!: EntityTable<RevenuePolicy, 'id'>;
+
+  revenue_entries!: EntityTable<RevenueEntry, 'id'>;
+
+  revenue_periods!: EntityTable<RevenuePeriod, 'id'>;
+
+  loss_coverings!: EntityTable<LossCovering, 'id'>;
+
+  loans!: EntityTable<Loan, 'id'>;
+
+  loan_repayments!: EntityTable<LoanRepayment, 'id'>;
+
+  profit_allocations!: EntityTable<ProfitAllocation, 'id'>;
+
+  profit_withdrawals!: EntityTable<ProfitWithdrawal, 'id'>;
+
   org_members!: EntityTable<OrgMember, 'id'>;
+
   org_moves!: EntityTable<OrgMove, 'id'>;
+
   commission_plans!: EntityTable<CommissionPlan, 'id'>;
+
   commission_lines!: EntityTable<CommissionLine, 'id'>;
+
   commission_payouts!: EntityTable<CommissionPayout, 'id'>;
 
-  constructor() {
-    super('realestate_platform');
+  testimonials!: EntityTable<Testimonial, 'id'>;
 
-    // v1 — Shared components + Module 1 only.
-    // Later modules append a NEW version block; never edit an old one.
+  team_members!: EntityTable<TeamMember, 'id'>;
+
+  awards!: EntityTable<Award, 'id'>;
+
+  faq_items!: EntityTable<FaqItem, 'id'>;
+
+  blog_posts!: EntityTable<BlogPost, 'id'>;
+
+  constructor() {
+    super('RealEstatePlatform');
+
     this.version(1).stores({
       documents: 'id, entity_type, entity_id, document_type, is_public, [entity_type+entity_id]',
       lookup_values: 'id, category, scope, is_active, sort_order, [category+scope]',
       company_settings: 'id',
-
-      lands: 'id, &code, name, status, acquisition_type, location_district, location_area, assigned_to, created_at',
-      landowners: 'id, name, phone, nid',
-      land_owner_mapping: 'id, land_id, owner_id, [land_id+owner_id]',
-      land_jv_details: 'id, &land_id',
-    });
-
-    // v2 — Module 1 status log. Non-indexed document fields (the uploaded Blob,
-    // file name/size) need no version bump; only new stores and indexes do.
-    this.version(2).stores({
-      land_status_history: 'id, land_id, to_status, event_date, created_at',
-    });
-
-    // v3 — Module 2 (Project Creation). `jv_share_basis` is a new *field* on
-    // land_jv_details, not an index, so that table needs no schema change.
-    this.version(3).stores({
-      projects: 'id, &code, name, status, project_type, is_public, is_featured, created_at',
-      land_project_mapping: 'id, land_id, project_id, [land_id+project_id]',
-      towers: 'id, project_id, name, status',
-      units:
-        'id, &code, tower_id, floor, status, unit_type, allocation_type, allocated_to_owner_id, for_sale_by, [tower_id+floor]',
-    });
-
-    // v4 — Module 3 (Sales / Lead / CRM) + the users table it assigns to.
-    // `leads.phone` is unique on purpose: it is the dedup key (Section 4.5).
-    this.version(4).stores({
+      projects: 'id, &code, name, status, sales_status, project_type, is_public, is_featured, created_at',
       users: 'id, &phone, &email, name, role, status',
-      leads:
-        'id, &code, &phone, name, status, source, assigned_to, interested_project_id, interested_unit_id, created_at',
-      lead_activities: 'id, lead_id, activity_type, activity_date, next_follow_up_date',
-    });
-
-    // v5 — Module 4 (Booking & Customer).
-    this.version(5).stores({
-      customers: 'id, &code, &phone, name, lead_id, created_at',
-      bookings:
-        'id, &code, customer_id, unit_id, lead_id, status, discount_approval_status, booking_date, booked_by, created_at',
-      discount_approval_rules: 'id, &role',
-    });
-
-    // v6 — project pipeline audit trail (addendum, mirrors land_status_history)
-    this.version(6).stores({
-      project_status_history: 'id, project_id, to_status, event_date, created_at',
-    });
-
-    // v7 — money capture, brought forward from Module 7 (Section 8.2)
-    this.version(7).stores({
-      payments: 'id, booking_id, installment_id, payment_date, payment_method, received_by',
-      installment_plan_templates: 'id, project_id, sequence_no, [project_id+sequence_no]',
-    });
-
-    // v8 — Module 5 (Site Progress Update). `towers.current_progress_pct` is a
-    // new *field*, not an index, so the towers store needs no schema change.
-    this.version(8).stores({
-      tower_work_items: 'id, tower_id, sequence_no, status, [tower_id+sequence_no]',
-      site_progress_updates: 'id, work_item_id, update_date, updated_by, created_at',
-      material_requests:
-        'id, &code, project_id, tower_id, work_item_id, status, request_date, requested_by, created_at',
-      material_request_items: 'id, request_id',
-    });
-
-    // v9 — audit trail for the Section 6.5 request lifecycle (addendum, same
-    // pattern as land_status_history and project_status_history).
-    this.version(9).stores({
-      material_request_status_history: 'id, request_id, to_status, event_date, created_at',
-    });
-
-    // v10 — Module 6 (Procurement & Supplier Voucher, Section 7).
-    //
-    // `stock` is indexed on [project_id+item_name+unit] because Section 7.7
-    // makes that triple the identity of a stock row — every GRN, issue and
-    // transfer looks a row up by it. Dexie cannot index `null`, so a central
-    // stock row (project_id = null) is found through the `item_name` index and
-    // filtered in the repository; see the note there.
-    this.version(10).stores({
-      suppliers: 'id, &code, name, type, phone',
-      purchase_orders:
-        'id, &code, request_id, project_id, supplier_id, status, order_date, created_at',
-      purchase_order_items: 'id, po_id, item_name',
-      goods_receipts: 'id, &code, po_id, receipt_date, received_by, created_at',
-      goods_receipt_items: 'id, grn_id, po_item_id, quality_check',
-      stock: 'id, project_id, item_name, unit, [project_id+item_name+unit]',
-      stock_issues: 'id, &code, project_id, work_item_id, item_name, issue_date, issued_by',
-      stock_transfers: 'id, &code, from_project_id, to_project_id, item_name, transfer_date',
-      supplier_vouchers:
-        'id, &code, po_id, supplier_id, project_id, payment_date, payment_method, paid_by',
-    });
-
-    // v11 — Module 7 (Finance, Section 8).
-    //
-    // `payment_installments.status` is indexed even though `overdue` is never
-    // stored in it (see the note on the type): the index still answers "what
-    // is unpaid", and the overdue cut is a date comparison on top of that.
-    this.version(11).stores({
-      payment_schedules: 'id, entity_id, [entity_type+entity_id]',
-      payment_installments: 'id, schedule_id, due_date, status, [schedule_id+installment_no]',
-      refunds: 'id, &code, booking_id, refund_date, processed_by',
-      expenses:
-        'id, &code, project_id, land_id, cost_category, expense_date, payment_method, paid_by',
-    });
-
-    // v12 — Module 8 (User & Role Management, Section 9).
-    //
-    // The compound index is unique: a user is either assigned to a project or
-    // not, and a duplicate row would silently double every count that reads
-    // through it.
-    this.version(12).stores({
       user_project_assignments: 'id, user_id, project_id, &[user_id+project_id]',
-    });
-
-    /*
-     * v13 — Module 6 addendum: the material catalogue (Tier 3.1, Section 6.6).
-     *
-     * `material_items` gives an item an identity that survives being renamed.
-     * `stock` gains `[project_id+item_id]` and every line table gains a plain
-     * `item_id` index, so the five tables that carried free text can be read
-     * by item rather than by spelling.
-     *
-     * The old `[project_id+item_name+unit]` index is deliberately left in
-     * place. Rows written before this version have no `item_id`, and
-     * `stockRepository.findRow` still falls back to the name for them — an
-     * index that is no longer the identity but is still the only way to find
-     * pre-catalogue rows.
-     *
-     * `project_budget_lines` was going to share this block with Tier 3.2, but
-     * 3.2 is not built. Declaring an empty table for an unbuilt feature would
-     * freeze indexes nobody has designed yet, so 3.2 takes v14.
-     */
-    this.version(13)
-      .stores({
-        material_items: 'id, &code, name, unit, category, is_active',
-        material_request_items: 'id, request_id, item_id',
-        purchase_order_items: 'id, po_id, item_name, item_id',
-        stock: 'id, project_id, item_name, unit, item_id, [project_id+item_name+unit], [project_id+item_id]',
-        stock_issues:
-          'id, &code, project_id, work_item_id, item_name, item_id, issue_date, issued_by',
-        stock_transfers:
-          'id, &code, from_project_id, to_project_id, item_name, item_id, transfer_date',
-      })
-      .upgrade((tx) => backfillMaterialItems(tx));
-
-    /*
-     * v14 — Module 7 addendum: the project budget (Tier 3.2, Section 8.3).
-     *
-     * Indexed on `[project_id+cost_category]` because that pair is the identity
-     * of a budget line — a project budgets each head once, and the editor looks
-     * a line up by it rather than scanning.
-     *
-     * This was going to share v13 with the material catalogue. It did not,
-     * because declaring an empty table for a feature nobody had designed would
-     * have frozen indexes before the shape was known.
-     */
-    this.version(14).stores({
-      project_budget_lines: 'id, project_id, cost_category, [project_id+cost_category]',
-    });
-
-    /*
-     * v15 — Module 7 addendum: bank accounts and the cash position (Tier 3.5).
-     *
-     * `account_id` is indexed on all four money tables because the account
-     * ledger reads one account's movements out of four tables at once, and an
-     * unindexed scan of every payment ever taken to draw one statement is the
-     * kind of thing that is fine in a demo and not in an office.
-     *
-     * `vat_amount` and `ait_amount` are added to `expenses` and
-     * `supplier_vouchers` as plain columns — non-indexed, so they need no
-     * declaration here at all. Noted rather than listed, so nobody later hunts
-     * for the version block that "should" have created them.
-     */
-    this.version(15).stores({
+      leads: 'id, &code, &phone, name, status, source, assigned_to, interested_project_id, created_at',
+      lead_activities: 'id, lead_id, activity_type, activity_date, next_follow_up_date',
+      customers: 'id, &code, &phone, name, lead_id, created_at',
       bank_accounts: 'id, &code, name, type, is_active',
-      // every index the earlier versions declared, plus account_id — a stores()
-      // spec replaces the table's whole index set, so anything omitted here
-      // would be silently dropped
-      payments:
-        'id, booking_id, installment_id, payment_date, payment_method, received_by, account_id',
-      expenses:
-        'id, &code, project_id, land_id, cost_category, expense_date, payment_method, paid_by, account_id',
-      supplier_vouchers:
-        'id, &code, po_id, supplier_id, project_id, payment_date, payment_method, paid_by, account_id',
-      refunds: 'id, &code, booking_id, refund_date, processed_by, account_id',
-    });
-
-    /*
-     * v16 — Section 7.8b: what a site actually used, and what it sent back.
-     *
-     * Two new tables and nothing altered, so no existing index set is at risk
-     * of being dropped by an incomplete stores() spec (the v15 trap). Existing
-     * `stock_issues` are untouched and stay exactly what they were — a record
-     * of material leaving the store — they simply stop being read as
-     * consumption.
-     *
-     * Both are indexed on `project_id` and on `[project_id+item_id]`: the site
-     * balance for one project is issues minus these two, grouped by item, and
-     * it is computed on every stock screen.
-     */
-    this.version(16).stores({
-      stock_consumptions:
-        'id, &code, project_id, work_item_id, item_id, used_date, [project_id+item_id]',
-      stock_returns: 'id, &code, project_id, item_id, return_date, [project_id+item_id]',
-    });
-
-    /*
-     * v17 — a land payment can name the instalment it settles (Section 8.2).
-     *
-     * `payments` has carried `installment_id` since the buyer side was built;
-     * the expense ledger, which is how money goes *out*, had no equivalent, so
-     * every payment to a landowner was forced through the oldest-first
-     * waterfall whatever both sides had agreed it was for.
-     *
-     * The whole v15 index set is repeated: a stores() spec replaces a table's
-     * indexes, so anything omitted here would be silently dropped.
-     */
-    this.version(17).stores({
-      expenses:
-        'id, &code, project_id, land_id, cost_category, expense_date, payment_method, paid_by, account_id, installment_id',
-    });
-
-    /*
-     * v18 — the third way material leaves a site (Section 7.8b).
-     *
-     * One new table, nothing altered. A site with only "used" and "returned"
-     * has no truthful entry for a bag of set cement, so it stayed on the
-     * balance for ever — which is exactly the kind of unaccountable quantity
-     * the site balance exists to remove.
-     */
-    this.version(18).stores({
-      stock_write_offs:
-        'id, &code, project_id, item_id, write_off_date, reason, [project_id+item_id]',
-    });
-
-    /*
-     * v19 — the land pipeline takes the BRD's names (BRD v2.0 LAND-004).
-     *
-     * No index changes: `lands.status` and `land_status_history.to_status` were
-     * already indexed and stay indexed. The version block exists only to hang
-     * the row rewrite off, the same way v13 hung the material-item back-fill.
-     *
-     * The rewrite is done here rather than by a find-and-replace across `src/`,
-     * and that is not fussiness. `site_visit_done` is a value in TWO unrelated
-     * enums — this one and the *lead* pipeline in `lib/domain/lead.ts`, where
-     * it means a sales visit to a prospective buyer. A global replace would
-     * have silently renamed half of Sales & CRM.
-     *
-     * `negotiation`, `acquired`, `jv_signed`, `rejected` and
-     * `linked_to_project` keep their values and are absent from the map. A row
-     * whose status is not in the map is left exactly as it is, so re-running
-     * this upgrade on already-migrated data is a no-op rather than a
-     * corruption.
-     */
-    this.version(19).stores({}).upgrade(async (tx) => {
-      const RENAMED: Record<string, string> = {
-        new: 'sourced',
-        site_visit_done: 'under_review',
-        legal_verification: 'dd_in_progress',
-        decision: 'agreed',
-      };
-
-      const lands = await tx.table('lands').toArray();
-      for (const land of lands) {
-        const next = RENAMED[land.status as string];
-        if (next) await tx.table('lands').update(land.id, { status: next });
-      }
-
-      /*
-       * Both ends of every history row. `from_status` matters as much as
-       * `to_status`: the Timeline renders "Due Diligence — from Under Review",
-       * and a half-migrated row would look up a label for a status that no
-       * longer exists and render undefined.
-       */
-      const history = await tx.table('land_status_history').toArray();
-      for (const event of history) {
-        const from = RENAMED[event.from_status as string];
-        const to = RENAMED[event.to_status as string];
-        if (from || to) {
-          await tx.table('land_status_history').update(event.id, {
-            ...(from ? { from_status: from } : {}),
-            ...(to ? { to_status: to } : {}),
-          });
-        }
-      }
-    });
-
-    /*
-     * v20 — batch L2: site visits and feasibility (BRD section 8).
-     *
-     * Two new tables, nothing altered, so no existing index set is at risk of
-     * being dropped by an incomplete stores() spec (the v15 trap).
-     *
-     * `site_visits` is indexed on `land_id` and on `[land_id+visit_date]`: the
-     * tab reads one land's visits newest-first, which is the compound index
-     * exactly. `land_feasibility` carries `&[land_id+version_no]` — a land
-     * numbers its studies 1, 2, 3 and two rows sharing a number would make
-     * "the current study" ambiguous, which is the one thing gate G1 must never
-     * be. `status` is indexed because the gate asks for the approved one.
-     */
-    this.version(20).stores({
-      site_visits: 'id, land_id, visit_date, [land_id+visit_date]',
-      land_feasibility: 'id, land_id, status, version_no, &[land_id+version_no]',
-    });
-
-    /*
-     * v21 — batch L3: legal due diligence (BRD section 9).
-     *
-     * `land_dd_items` carries `&[land_id+item_id]` because a land checks each
-     * item once. A duplicate row would make "how many mandatory items are
-     * outstanding" — which is the number gate G2 blocks on — depend on which
-     * of two rows was read first.
-     *
-     * `[land_id+status]` answers the gate's actual question (what on this land
-     * is not passed/waived) without scanning every land's checklist.
-     */
-    this.version(21).stores({
-      dd_checklist_items: 'id, &code, category, is_mandatory, is_active, sort_order',
-      land_dd_items: 'id, land_id, item_id, status, &[land_id+item_id], [land_id+status]',
-    });
-
-    /*
-     * v22 — batch L4: negotiation and acquisition cost (BRD section 10).
-     *
-     * `land_negotiations` is indexed on `[land_id+round_no]` but NOT uniquely:
-     * a land can genuinely run two ladders at once when it has two owners
-     * negotiating separately, and a unique index would force the second owner's
-     * round 1 to be called round 3.
-     *
-     * `land_acquisition_costs` carries `&[land_id+cost_head]` because a land
-     * estimates each head once — two rows for "registration fee" would make the
-     * total depend on whether the reader summed or took the first.
-     */
-    this.version(22).stores({
-      land_negotiations: 'id, land_id, owner_id, status, offer_date, [land_id+round_no]',
-      land_acquisition_costs: 'id, land_id, cost_head, &[land_id+cost_head]',
-    });
-
-    /*
-     * v23 — batch L6: land development (BRD section 11).
-     *
-     * `[land_id+status]` is what gate G3 reads: whether anything on this plot
-     * is still unfinished. Without it the gate would scan every activity on
-     * every plot to answer a question about one.
-     *
-     * `land_development_progress` is indexed on `activity_id` alone — a
-     * progress log is read whole, newest first, and never queried by date
-     * across activities.
-     */
-    this.version(23).stores({
-      land_development_activities:
-        'id, land_id, activity_type, contractor_id, status, [land_id+status]',
-      land_development_progress: 'id, activity_id, progress_date',
-    });
-
-    /*
-     * v24 — `jv_signed` folds into `acquired` (client decision 2026-09-18).
-     *
-     * A joint venture that has been signed and a purchase that has been
-     * registered are the same state of the land: it is ours. How it became
-     * ours is `acquisition_type`, which every screen already reads, so the
-     * second status only meant every rule after acquisition had to be written
-     * twice — and one of the two was always the one somebody forgot.
-     *
-     * No index changes; the block exists to hang the row rewrite off, the same
-     * way v19 did for the BRD rename. Rows that are already `acquired` are not
-     * in the map and are left alone, so re-running this is a no-op.
-     *
-     * The new statuses (`under_development`, `ready_for_project`, `on_hold`)
-     * need no migration: no existing row can be in them, and the land
-     * development a plot already has moves it on the next time that work is
-     * touched.
-     */
-    this.version(24).stores({}).upgrade(async (tx) => {
-      const lands = await tx.table('lands').toArray();
-      for (const land of lands) {
-        if (land.status === 'jv_signed') {
-          await tx.table('lands').update(land.id, { status: 'acquired' });
-        }
-      }
-
-      // both ends of a history row, or the Timeline renders a missing label
-      const history = await tx.table('land_status_history').toArray();
-      for (const event of history) {
-        const from = event.from_status === 'jv_signed';
-        const to = event.to_status === 'jv_signed';
-        if (from || to) {
-          await tx.table('land_status_history').update(event.id, {
-            ...(from ? { from_status: 'acquired' } : {}),
-            ...(to ? { to_status: 'acquired' } : {}),
-          });
-        }
-      }
-    });
-
-    /*
-     * v25 — `residential` becomes `apartment` (client decision 2026-09-20).
-     *
-     * The project type list grew two land-sale shapes, `land_share` and
-     * `plot_development`, because a plot the company wants to sell is linked
-     * to a project first and the type is where that sale is declared — the
-     * Land module sells nothing. Next to "plot development", "residential" no
-     * longer said which of the two it was, so it is now `apartment`.
-     *
-     * No index changes; like v19 and v24 the block exists to hang the row
-     * rewrite off. Rows already on another type are untouched, so re-running
-     * is a no-op.
-     */
-    this.version(25).stores({}).upgrade(async (tx) => {
-      const projects = await tx.table('projects').toArray();
-      for (const project of projects) {
-        if (project.project_type === 'residential') {
-          await tx.table('projects').update(project.id, { project_type: 'apartment' });
-        }
-      }
-    });
-
-    /*
-     * v26 — projects that do not sell flats (PROJECT-MODULE-PLAN.md).
-     *
-     * `plot_development` sells plots by the katha and `land_share` sells
-     * undivided shares, so `units` gains the columns those need: `land_size` /
-     * `land_size_unit`, `share_pct`, and the two plot price drivers
-     * `road_width_ft` and `is_corner`. `floor` and `size_sqft` become nullable
-     * in the type, since a plot has no floor and a share has neither.
-     *
-     * Only `projects` is restated, for the new `succeeds_project_id` index —
-     * Phase 3 looks up "what grew out of this share project" by it. None of the
-     * new `units` columns is queried on, so `units` keeps its v3 index line and
-     * Dexie needs no schema change there: existing flats simply have no value
-     * for them, which is what `projectShape()` already expects.
-     *
-     * No upgrade body. Every existing row is a tower-shape unit and is already
-     * correct; there is nothing to rewrite.
-     */
-    this.version(26).stores({
-      projects:
-        'id, &code, name, status, project_type, is_public, is_featured, succeeds_project_id, created_at',
-    });
-
-    /*
-     * v27 — Phase 2: selling what is not a flat (PROJECT-MODULE-PLAN.md).
-     *
-     * A booking gains `road_premium` and `corner_premium`, which are to a plot
-     * what floor and facing are to a flat. Neither is indexed — nothing
-     * queries on a premium — so no table line changes and there is nothing to
-     * migrate: every existing booking is a flat and already has the two
-     * columns it uses. The block exists so the version number records when the
-     * shape of a booking changed.
-     */
-    this.version(27).stores({});
-
-    /*
-     * v28 — Phase 3: delivery (PROJECT-MODULE-PLAN.md §4).
-     *
-     * `unit_deliveries` is new: one row per delivery step done on a unit, so a
-     * plot's possession, deed and mutation are each dated and referenced. It
-     * is looked up by unit (the booking page) and by booking (the cancel and
-     * delete cascades), hence both indexes.
-     */
-    this.version(28).stores({
-      unit_deliveries: 'id, unit_id, booking_id, step, event_date',
-    });
-
-    /*
-     * v29 — project first, land optional (PLATFORM-REPLAN.md, Phase 1).
-     *
-     * Three things change shape:
-     *
-     * 1. `linked_to_project` stops being a land status. Linking used to
-     *    overwrite whatever the land was, which was harmless while only a held
-     *    land could be linked — and wrong once a project may be planned on land
-     *    still in negotiation. Each such land gets back the status its
-     *    development work says it is at (the same rule `nextAutomaticStep`
-     *    applies), and the link/unlink rows leave the status history: they
-     *    recorded a mapping, which `land_project_mapping` still holds, not a
-     *    step in the land's own life.
-     * 2. Lands gain `entry_mode` (indexed: the land list filters owned against
-     *    pipeline) and `acquired_on`. Every existing land came through the
-     *    pipeline, so every row is stamped `pipeline`.
-     * 3. Projects gain `sales_status` (indexed: bookings list only projects
-     *    whose sales are open). A project that already has bookings was
-     *    evidently selling, so it starts `open`; the rest start `not_open`.
-     *
-     * The other v29 columns (`construction_after_sale`, the estimate fields,
-     * `land_acquisition_costs.historic_paid_amount`, `expenses.land_cost_head`)
-     * are not queried on and need no rewrite — absent reads as empty.
-     */
-    this.version(29)
-      .stores({
-        lands:
-          'id, &code, name, status, acquisition_type, entry_mode, location_district, location_area, assigned_to, created_at',
-        projects:
-          'id, &code, name, status, sales_status, project_type, is_public, is_featured, succeeds_project_id, created_at',
-      })
-      .upgrade(async (tx) => {
-        const activities = await tx.table('land_development_activities').toArray();
-        const lands = await tx.table('lands').toArray();
-        for (const land of lands) {
-          const changes: Record<string, unknown> = { entry_mode: land.entry_mode ?? 'pipeline' };
-          if (land.status === 'linked_to_project') {
-            const live = activities.filter(
-              (a) => a.land_id === land.id && a.status !== 'cancelled',
-            );
-            const outstanding = live.filter((a) => a.status !== 'completed').length;
-            changes.status = land.no_development_required
-              ? 'ready_for_project'
-              : live.length === 0
-                ? 'acquired'
-                : outstanding > 0
-                  ? 'under_development'
-                  : 'ready_for_project';
-          }
-          await tx.table('lands').update(land.id, changes);
-        }
-
-        const history = await tx.table('land_status_history').toArray();
-        const linkRows = history
-          .filter((e) => e.from_status === 'linked_to_project' || e.to_status === 'linked_to_project')
-          .map((e) => e.id);
-        await tx.table('land_status_history').bulkDelete(linkRows);
-
-        // a booking reaches its project through unit → tower
-        const towerProject = new Map(
-          (await tx.table('towers').toArray()).map((t) => [t.id as string, t.project_id as string]),
-        );
-        const unitProject = new Map(
-          (await tx.table('units').toArray()).map((u) => [
-            u.id as string,
-            towerProject.get(u.tower_id as string),
-          ]),
-        );
-        const booked = new Set(
-          (await tx.table('bookings').toArray()).map((b) => unitProject.get(b.unit_id as string)),
-        );
-        const projects = await tx.table('projects').toArray();
-        for (const project of projects) {
-          if (project.sales_status) continue;
-          await tx
-            .table('projects')
-            .update(project.id, { sales_status: booked.has(project.id) ? 'open' : 'not_open' });
-        }
-      });
-
-    /*
-     * v30 — Phase 2 step 4: the material flow, request to payment
-     * (PLATFORM-REPLAN.md §4.5).
-     *
-     * 1. `supplier_bills` / `supplier_bill_items` are new: the supplier's bill,
-     *    matched against the order and the receipts, verified and approved
-     *    into the payable voucher Finance pays against.
-     * 2. `supplier_vouchers` gains an indexed `bill_id` — the payment now
-     *    points at the voucher it settles. The full index set is restated
-     *    because a stores() spec replaces it (the v15 trap).
-     * 3. `stock_transfers` gains an indexed `status`: a dispatch is on the way
-     *    until the other side receives it. Every existing transfer moved
-     *    instantly, so it is stamped `received` with its full quantity.
-     * 4. `purchase_orders.deliver_to` (not indexed): an order for a project
-     *    went to its site, a central one to the main store, so that is what
-     *    existing rows get.
-     *
-     * `goods_receipts.challan_no` and the two new request statuses need no
-     * rewrite.
-     */
-    this.version(30)
-      .stores({
-        supplier_bills: 'id, &code, po_id, supplier_id, project_id, status, bill_date, created_at',
-        supplier_bill_items: 'id, bill_id, po_item_id',
-        supplier_vouchers:
-          'id, &code, po_id, bill_id, supplier_id, project_id, payment_date, payment_method, paid_by, account_id',
-        stock_transfers:
-          'id, &code, from_project_id, to_project_id, item_name, item_id, status, transfer_date',
-      })
-      .upgrade(async (tx) => {
-        const transfers = await tx.table('stock_transfers').toArray();
-        for (const t of transfers) {
-          if (t.status) continue;
-          await tx.table('stock_transfers').update(t.id, {
-            status: 'received',
-            quantity_received: t.quantity,
-            received_date: t.transfer_date,
-            received_by: t.transferred_by ?? null,
-          });
-        }
-        const orders = await tx.table('purchase_orders').toArray();
-        for (const o of orders) {
-          if (o.deliver_to) continue;
-          await tx
-            .table('purchase_orders')
-            .update(o.id, { deliver_to: o.project_id ? 'site' : 'main_store' });
-        }
-      });
-
-    /*
-     * v31 — unit codes are unique per project, not company-wide (E2E test
-     * 2026-10-12 #2/#25). `code` stays indexed for lookups but loses `&`; the
-     * repository enforces uniqueness inside the project. No data rewrite.
-     */
-    this.version(31).stores({
-      units:
-        'id, code, tower_id, floor, status, unit_type, allocation_type, allocated_to_owner_id, for_sale_by, [tower_id+floor]',
-    });
-
-    /*
-     * v32 — multi-unit booking. A buyer taking two or three flats in one go
-     * still gets one booking per unit (schedule, receipts, refund and
-     * delivery all hang off one booking = one unit); `booking_group` is the
-     * shared reference that ties them together. Indexed so a group's siblings
-     * load in one query. Older bookings simply carry no group.
-     */
-    this.version(32).stores({
-      bookings:
-        'id, &code, customer_id, unit_id, lead_id, status, discount_approval_status, booking_date, booked_by, booking_group, created_at',
-    });
-
-    /*
-     * v33 — client meeting 2026-10-18. The road in front of the site moved
-     * from each tower to the project (`projects.front_road_width_ft`, not
-     * indexed): existing projects take the widest road any of their towers
-     * recorded. Plot blocks keep theirs, it is the block's internal road.
-     * `towers.staircase_count` and the unit status `draft` need no rewrite.
-     */
-    this.version(33)
-      .stores({})
-      .upgrade(async (tx) => {
-        const projects = await tx.table('projects').toArray();
-        const towers = await tx.table('towers').toArray();
-        for (const p of projects) {
-          if (p.front_road_width_ft != null) continue;
-          const widths = towers
-            .filter((t) => t.project_id === p.id && Number(t.front_road_width_ft) > 0)
-            .map((t) => Number(t.front_road_width_ft));
-          if (widths.length > 0)
-            await tx.table('projects').update(p.id, { front_road_width_ft: Math.max(...widths) });
-        }
-      });
-
-    /*
-     * v34 — DIRECT-PURCHASE-PLAN.md B2/B3 (client meeting 2026-10-18): a
-     * budget per work item, and costs bought straight against it. New tables
-     * only; `company_settings.purchase_mode` is unindexed and reads absent as
-     * `direct`.
-     */
-    this.version(34).stores({
-      work_item_budget_lines: 'id, work_item_id, project_id, tower_id',
-      direct_purchases:
-        'id, code, project_id, tower_id, work_item_id, budget_line_id, purchase_date, payment_status',
-    });
-
-    /* v35 — DIRECT-PURCHASE-PLAN.md B4: paying direct purchases from an account. */
-    this.version(35).stores({
-      direct_purchase_payments: 'id, code, purchase_id, project_id, account_id, payment_date',
-    });
-
-    /* v36 — DIRECT-PURCHASE-PLAN.md B5: partners, money in, parent → project. */
-    this.version(36).stores({
       partners: 'id, code, name',
       project_partners: 'id, project_id, partner_id, [project_id+partner_id]',
       fund_receipts: 'id, code, source_type, partner_id, project_id, account_id, receipt_date',
       fund_allocations: 'id, code, project_id, allocation_date',
-    });
-
-    /*
-     * v37 — SALES-FLOW-PLAN.md S1 (client 2026-10-22): no discount approval and
-     * no generated instalment schedule for buyers. A booking waiting on approval
-     * is re-derived from its money alone; every discount reads `not_required`
-     * (the column stays, the name is the scope's). Buyer schedules go — the
-     * agreement's terms replace them — and receipts lose the instalment they
-     * were spread onto. Land schedules are untouched.
-     */
-    this.version(37)
-      .stores({})
-      .upgrade(async (tx) => {
-        for (const b of await tx.table('bookings').toArray()) {
-          const status =
-            b.status === 'pending_approval' ? (b.booking_amount_received ? 'confirmed' : 'hold') : b.status;
-          await tx.table('bookings').update(b.id, { status, discount_approval_status: 'not_required' });
-        }
-        const schedules = (await tx.table('payment_schedules').toArray()).filter(
-          (s) => s.entity_type === 'booking',
-        );
-        const ids = new Set(schedules.map((s) => s.id));
-        const lines = (await tx.table('payment_installments').toArray()).filter((l) => ids.has(l.schedule_id));
-        await tx.table('payment_installments').bulkDelete(lines.map((l) => l.id));
-        await tx.table('payment_schedules').bulkDelete([...ids]);
-        await tx.table('payments').toCollection().modify({ installment_id: null });
-      });
-
-    /*
-     * v38 — client 2026-10-22: a lead is `booked` exactly while it has a live
-     * booking. One marked booked by hand with no booking goes back to
-     * negotiation; one whose booking was still on hold catches up to booked.
-     */
-    this.version(38)
-      .stores({})
-      .upgrade(async (tx) => {
-        const live = new Set(
-          (await tx.table('bookings').toArray())
-            .filter((b) => b.status !== 'cancelled' && b.lead_id)
-            .map((b) => b.lead_id as string),
-        );
-        for (const lead of await tx.table('leads').toArray()) {
-          if (lead.status === 'lost') continue;
-          if (live.has(lead.id) && lead.status !== 'booked') {
-            await tx.table('leads').update(lead.id, { status: 'booked' });
-          } else if (!live.has(lead.id) && lead.status === 'booked') {
-            await tx.table('leads').update(lead.id, { status: 'negotiation' });
-          }
-        }
-      });
-
-    /*
-     * v39 — client 2026-10-22: road width is typed once, on the land. A land
-     * without one takes its project's old `front_road_width_ft`, else the
-     * latest site visit that measured the road.
-     */
-    this.version(39)
-      .stores({})
-      .upgrade(async (tx) => {
-        const projects = new Map(
-          (await tx.table('projects').toArray()).map((p) => [p.id, Number(p.front_road_width_ft) || 0]),
-        );
-        const fromProject = new Map<string, number>();
-        for (const m of await tx.table('land_project_mapping').toArray()) {
-          const w = projects.get(m.project_id) ?? 0;
-          if (w > (fromProject.get(m.land_id) ?? 0)) fromProject.set(m.land_id, w);
-        }
-        const fromVisit = new Map<string, { date: string; w: number }>();
-        for (const v of await tx.table('site_visits').toArray()) {
-          const w = Number(v.road_width_ft) || 0;
-          if (w <= 0 || v.status === 'planned') continue;
-          const prev = fromVisit.get(v.land_id);
-          if (!prev || v.visit_date > prev.date) fromVisit.set(v.land_id, { date: v.visit_date, w });
-        }
-        for (const land of await tx.table('lands').toArray()) {
-          if (Number(land.front_road_width_ft) > 0) continue;
-          const w = fromProject.get(land.id) || fromVisit.get(land.id)?.w;
-          if (w) await tx.table('lands').update(land.id, { front_road_width_ft: w });
-        }
-      });
-
-    /*
-     * v40 — website content (W7): testimonials, team, awards and FAQ, edited
-     * under Admin → Website content. `is_published` is a boolean, which
-     * IndexedDB cannot index, so lists are filtered after the read.
-     */
-    this.version(40).stores({
-      testimonials: 'id, project_id, sort_order',
-      team_members: 'id, sort_order',
-      awards: 'id, kind, sort_order',
-      faq_items: 'id, category, sort_order',
-    });
-
-    /*
-     * v41 — land offers from the website's /landowners form (W8). `code` is
-     * unique like every display code; `status` drives the Lands inbox.
-     */
-    this.version(41).stores({
-      land_offers: 'id, &code, status, created_at',
-    });
-
-    // v42 — blog posts (Public Portal v2.0 §2.3, W9): slug unique, status and date indexed
-    this.version(42).stores({
-      blog_posts: 'id, &slug, status, published_at',
-    });
-
-    /*
-     * v43 — Share Sale (PROJECT-SHARE-SALE-PLAN.md, Phase 1): offerings with
-     * their valuation (NAV + premium), each customer's purchase, its
-     * installment schedule and the payments recorded against it.
-     */
-    this.version(43).stores({
       share_offerings: 'id, &code, project_id, status',
-      share_sales: 'id, &code, offering_id, project_id, customer_id, status',
+      share_sales: 'id, &code, offering_id, project_id, customer_id, status, sold_by_member_id',
       share_installments: 'id, sale_id, due_date',
-      share_payments: 'id, &code, sale_id, paid_on',
-    });
-
-    /*
-     * v44 — the Customer Portal reads and writes the platform database
-     * (PROJECT-SHARE-SALE-PLAN.md): purchase requests customers send from
-     * "New opportunities", and documents they upload against a purchase,
-     * reviewed by the office. File bytes sit in their own table.
-     */
-    this.version(44).stores({
+      share_payments: 'id, &code, sale_id, paid_on, account_id',
       share_requests: 'id, &code, offering_id, project_id, customer_id, status',
       customer_uploads: 'id, customer_id, sale_id, status',
       customer_upload_files: 'id',
-    });
-
-    /*
-     * v45 — BUYER-PORTAL-PLAN.md §2 (client decision D1, 2026-11-01): a
-     * booking keeps a stored schedule again, run by the same ledger as Share
-     * Sale. Reverses v37's "no buyer schedule". Every booking gets its rows
-     * from its booking money and agreement terms, and its receipts are
-     * re-applied oldest first. Share payments gain an indexed account so
-     * investor money reaches Cash Position.
-     */
-    this.version(45)
-      .stores({
-        booking_installments: 'id, booking_id, due_date',
-        share_payments: 'id, &code, sale_id, paid_on, account_id',
-      })
-      .upgrade(async (tx) => {
-        const ts = new Date().toISOString();
-        const payments = await tx.table('payments').toArray();
-        for (const b of await tx.table('bookings').toArray()) {
-          const rows = bookingScheduleRows(b).map((r) => ({ ...r, id: newId(), booking_id: b.id, created_at: ts, updated_at: ts, created_by: null }));
-          await tx.table('booking_installments').bulkAdd(rows);
-          const mine = payments.filter((p) => p.booking_id === b.id);
-          const applied = allocateBookingPayments(rows, mine, bookingFeeRule(b));
-          for (const p of mine) {
-            const a = applied.get(p.id);
-            if (a) await tx.table('payments').update(p.id, { allocations: a.allocations, principal: a.principal, late_fee: a.late_fee });
-          }
-          const settled = mine.map((p) => ({ ...p, late_fee: applied.get(p.id)?.late_fee ?? 0 }));
-          await tx.table('bookings').update(b.id, { fully_paid_on: paidOffOn(b, settled) });
-        }
-      });
-
-    /*
-     * v46 — BUYER-PORTAL-PLAN.md §2.7: a booking is signed with the same
-     * papers checklist as a share purchase, so an uploaded paper can belong to
-     * a booking. The Customer Portal lists a buyer's papers by it.
-     */
-    this.version(46).stores({
-      customer_uploads: 'id, customer_id, sale_id, booking_id, status',
-    });
-
-    /*
-     * v47 — SHARE-SALE-FEEDBACK-PLAN.md part C: payments a customer made at
-     * the bank and reported from the Customer Portal with the slip, waiting
-     * for Accounts to confirm them. A new table only; no upgrade.
-     */
-    this.version(47).stores({
       payment_submissions: 'id, &code, customer_id, holding_code, status',
-    });
-
-    /*
-     * v48 — Revenue Share (REVENUE-SHARE-PLAN.md R1–R5): a running project's
-     * income and cost, the periods its profit is worked out for, how a loss
-     * was covered and the loans behind it, each holder's frozen share of a
-     * declared period, and the payouts they ask for. New tables only.
-     */
-    this.version(48).stores({
       revenue_policies: 'id, &project_id',
       revenue_entries: 'id, &code, project_id, entry_date, direction, account_id',
       revenue_periods: 'id, &code, project_id, period_start, status',
@@ -1093,42 +175,38 @@ export class AppDatabase extends Dexie {
       loan_repayments: 'id, &code, loan_id, project_id, paid_on',
       profit_allocations: 'id, period_id, project_id, customer_id, partner_id, share_sale_id',
       profit_withdrawals: 'id, &code, project_id, customer_id, partner_id, status',
-    });
-
-    /*
-     * v49 — REVENUE-SHARE-PLAN.md §6–7 (batches R6–R7): the sales
-     * organisation as a free tree with its move history, commission plans,
-     * one commission line per person per stage of a sale, and the payouts
-     * that pay them. Every sale gains an indexed `sold_by_member_id`. New
-     * tables and indexes only; no upgrade. (v48 is the revenue-share tables.)
-     */
-    this.version(49).stores({
       org_members: 'id, &code, parent_id, designation_id, user_id, partner_id, status',
       org_moves: 'id, member_id, effective_date',
       commission_plans: 'id, &code, applies_to, project_id, status',
-      commission_lines: 'id, plan_id, share_sale_id, booking_id, project_id, member_id, status, payout_id',
+      commission_lines: 'id, plan_id, share_sale_id, project_id, member_id, status, payout_id',
       commission_payouts: 'id, &code, member_id, paid_on, account_id',
-      share_sales: 'id, &code, offering_id, project_id, customer_id, status, sold_by_member_id',
-      bookings:
-        'id, &code, customer_id, unit_id, lead_id, status, discount_approval_status, booking_date, booked_by, booking_group, created_at, sold_by_member_id',
+      testimonials: 'id, project_id, sort_order',
+      team_members: 'id, sort_order',
+      awards: 'id, kind, sort_order',
+      faq_items: 'id, category, sort_order',
+      blog_posts: 'id, &slug, status, published_at',
     });
   }
 }
 
 let instance: AppDatabase | null = null;
 
-/** Lazily created so the module stays import-safe during SSR. */
+/** The one database handle, created on first use in the browser. */
 export function getDb(): AppDatabase {
   if (typeof window === 'undefined') {
-    throw new Error('IndexedDB is browser-only — call getDb() from a client component.');
+    throw new Error('The database is only available in the browser.');
   }
   if (!instance) instance = new AppDatabase();
   return instance;
 }
 
-/** Convenience proxy: `db.lands.toArray()` works in client code. */
+/**
+ * A lazy handle, so importing a repository does not open the database.
+ * Reads and writes go through this exactly as they did before.
+ */
 export const db = new Proxy({} as AppDatabase, {
-  get(_t, prop) {
-    return Reflect.get(getDb(), prop, getDb());
+  get(_target, prop: string | symbol) {
+    const value = Reflect.get(getDb(), prop);
+    return typeof value === 'function' ? value.bind(getDb()) : value;
   },
 });

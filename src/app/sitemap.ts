@@ -13,7 +13,6 @@ const PAGES: { path: string; changeFrequency: 'daily' | 'weekly' | 'monthly' | '
   { path: '/blog', changeFrequency: 'weekly', priority: 0.6 },
   { path: '/buyers-guide', changeFrequency: 'monthly', priority: 0.6 },
   { path: '/nrb', changeFrequency: 'monthly', priority: 0.5 },
-  { path: '/landowners', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/about', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/contact', changeFrequency: 'monthly', priority: 0.5 },
   { path: '/privacy', changeFrequency: 'yearly', priority: 0.2 },

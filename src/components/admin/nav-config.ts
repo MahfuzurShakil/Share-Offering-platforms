@@ -3,14 +3,10 @@ import type { ModuleKey } from '@/lib/domain/access';
 import type { UserRole } from '@/lib/db/types';
 import {
   Building2,
-  Coins,
   Globe,
-  HardHat,
   LayoutDashboard,
   PieChart,
-  Map,
   Network,
-  Package,
   UserRound,
   Wallet,
   Users,
@@ -34,15 +30,6 @@ export interface NavItem {
    */
   visibleFor?: (role: UserRole) => boolean;
   /**
-   * DIRECT-PURCHASE-PLAN.md §7: shown only when the company's purchase mode
-   * includes procurement (request → PO → receive → bill).
-   */
-  procurementOnly?: boolean;
-  /** client, 2026-10-20: the Finance group is hidden while the company buys directly */
-  hiddenInDirect?: boolean;
-  /** shown only when the company buys directly (the Payments queue of site costs) */
-  directOnly?: boolean;
-  /**
    * Other paths that belong to this item: a detail page that lives outside the
    * list's own path (a share purchase opened from Investors & Dues).
    */
@@ -62,7 +49,7 @@ export interface NavGroup {
   items: NavItem[];
 }
 
-/** Sidebar groups mirror the eight modules of Scope Document v3.md. */
+/** Sidebar groups, Phase 1: the share-sale product's own modules. */
 export const NAV_GROUPS: NavGroup[] = [
   {
     label: 'Dashboard',
@@ -78,33 +65,12 @@ export const NAV_GROUPS: NavGroup[] = [
     ],
   },
   {
-    label: 'Land Management',
-    icon: Map,
-    items: [
-      { label: 'Lands', href: '/admin/lands', module: 'land' },
-      { label: 'Landowners', href: '/admin/landowners', module: 'land' },
-      { label: 'Land Offers', href: '/admin/land-offers', module: 'land' },
-    ],
-  },
-  /*
-   * Its own menu after Lands (client, 2026-10-17), in the order the work
-   * happens: project → land → construction. Each site's workspace — progress,
-   * materials, requests — opens from here.
-   */
-  {
-    label: 'Construction',
-    icon: HardHat,
-    items: [{ label: 'Construction Sites', href: '/admin/site-progress', module: 'site_progress' }],
-  },
-  {
     label: 'Sales & CRM',
     icon: UserRound,
     items: [
       { label: 'Leads', href: '/admin/leads', module: 'crm' },
-      { label: 'Bookings', href: '/admin/bookings', module: 'booking' },
-      { label: 'Customers', href: '/admin/customers', module: 'booking' },
+      { label: 'Customers', href: '/admin/customers', module: 'share_sale' },
       // SALES-FLOW-PLAN.md S5 — who owes what against their agreement, in every purchase mode
-      { label: 'Collections', href: '/admin/collections', module: 'finance_collection' },
     ],
   },
   /*
@@ -146,52 +112,19 @@ export const NAV_GROUPS: NavGroup[] = [
    * material requests are made from the project's own tabs. Procurement keeps
    * the all-project request list below.
    */
-  {
-    label: 'Procurement',
-    icon: Package,
-    items: [
-      {
-        label: 'Material Requests',
-        href: '/admin/material-requests',
-        module: 'material_request',
-        procurementOnly: true,
-      },
-      { label: 'Purchase Orders', href: '/admin/purchase-orders', module: 'procurement', procurementOnly: true },
-      { label: 'Suppliers', href: '/admin/suppliers', module: 'procurement', procurementOnly: true },
-      { label: 'Stock', href: '/admin/stock', module: 'procurement', procurementOnly: true },
-      { label: 'Material Items', href: '/admin/material-items', module: 'procurement', procurementOnly: true },
-      {
-        label: 'Supplier Vouchers',
-        href: '/admin/supplier-vouchers',
-        module: 'supplier_voucher',
-        procurementOnly: true,
-      },
-    ],
-  },
   /*
-   * Client, 2026-10-20: the money screens of the direct-purchase flow in one
-   * place — pay the site's costs, see whose money it is, see what the
-   * accounts hold. The old Finance group stays for procurement companies.
+   * The money screens: whose capital the company holds, what it owes on its
+   * loans, and what the accounts hold today. Bills to pay and the payment
+   * history belong to the construction build (Phase 2); the General Ledger
+   * joins this group in S4.
    */
   {
-    label: 'Payments & Fund',
+    label: 'Money',
     icon: Wallet,
     items: [
-      // client, 2026-10-21: two plain menu items rather than tabs on one page
-      { label: 'Bills to Pay', href: '/admin/payments', module: 'finance_expense', directOnly: true },
-      { label: 'Payment History', href: '/admin/payments/history', module: 'finance_expense', directOnly: true },
       { label: 'Fund & Partners', href: '/admin/fund', module: 'finance_expense' },
       { label: 'Loans', href: '/admin/fund/loans', module: 'finance_expense' },
       { label: 'Cash Position', href: '/admin/cash', module: 'finance_expense' },
-    ],
-  },
-  {
-    label: 'Finance',
-    icon: Coins,
-    items: [
-      { label: 'Overview', href: '/admin/finance', module: 'dashboard', hiddenInDirect: true },
-      { label: 'Expenses', href: '/admin/expenses', module: 'finance_expense', hiddenInDirect: true },
-      { label: 'Refunds', href: '/admin/refunds', module: 'finance_collection', hiddenInDirect: true },
     ],
   },
   {

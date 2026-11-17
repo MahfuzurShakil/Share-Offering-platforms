@@ -7,7 +7,7 @@ import type {
 } from '@/lib/db/types';
 import { COST_CATEGORIES } from '@/lib/db/types';
 import { humanize } from '@/lib/utils/format';
-import { money } from './procurement';
+import { money } from './money';
 
 export { money };
 

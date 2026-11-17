@@ -47,11 +47,10 @@ import dynamic from 'next/dynamic';
 import { useCallback, useState } from 'react';
 import { Share2 } from 'lucide-react';
 import { areaOf } from '@/lib/domain/public-portal';
-import { progressPublicRepository } from '@/lib/repositories/public/progress.public.repository';
 import { usePageSubject, useEnquiry } from '../enquiry/EnquiryProvider';
 import { en } from '../i18n/en';
 import { Availability } from './Availability';
-import { Amenities, Nearby, Papers, PaymentPlan, PlotStepper, ProgressBar, SectionNav, SitePhotos } from './DetailParts';
+import { Amenities, Nearby, Papers, PaymentPlan, PlotStepper, ProgressBar, SectionNav } from './DetailParts';
 import { ProjectGallery } from './ProjectGallery';
 
 const ProjectsMap = dynamic(() => import('../ProjectsMap'), { ssr: false, loading: () => <div className="size-full animate-pulse bg-site-soft" /> });
@@ -174,7 +173,6 @@ function NotFound() {
 export function ProjectDetail({ code }: { code: string }) {
   const project = useLiveQuery(() => publicProjectRepository.detail(code), [code]);
   const others = useLiveQuery(() => publicProjectRepository.list(), []);
-  const photos = useLiveQuery(() => progressPublicRepository.photoFeed(6, code), [code]);
   const company = useCompanyInfo();
   const [copied, setCopied] = useState(false);
   const [unitCode, setUnitCode] = useState<string | null>(null);
@@ -464,11 +462,6 @@ export function ProjectDetail({ code }: { code: string }) {
                   <p className="text-sm text-site-muted">{td.progressNote}</p>
                 </div>
               </div>
-              {photos && photos.length > 0 && (
-                <div className="mt-6">
-                  <SitePhotos photos={photos} />
-                </div>
-              )}
             </Section>
           )}
 

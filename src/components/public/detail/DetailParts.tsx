@@ -1,7 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
+import { useEffect, useState } from 'react';
 import {
   Baby,
   Building2,
@@ -19,19 +18,14 @@ import {
   Moon,
   Cable,
   Check,
-  ChevronLeft,
-  ChevronRight,
-  X,
   type LucideIcon,
 } from 'lucide-react';
 import { formatPublicPrice } from '@/lib/domain/public-portal';
 import type { PublicPaymentStep } from '@/lib/repositories/public/project.public.repository';
-import type { PublicSitePhoto } from '@/lib/repositories/public/progress.public.repository';
 import { cn } from '@/lib/utils/cn';
 import { en } from '../i18n/en';
 import { useInView } from '../motion';
 import { Taka } from '../ProjectCard';
-import { SiteImage } from '../SiteImage';
 
 const t = en.detail;
 
@@ -231,78 +225,6 @@ export function PlotStepper({ stage }: { stage: keyof typeof PLOT_STEP_OF }) {
         );
       })}
     </ol>
-  );
-}
-
-const photoDate = (d: string) => new Date(`${d.slice(0, 10)}T00:00:00`).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
-
-/** Dated public site photos for this project, newest first; any photo opens a full-screen viewer. */
-export function SitePhotos({ photos }: { photos: PublicSitePhoto[] }) {
-  const [open, setOpen] = useState<number | null>(null);
-  const closeBtn = useRef<HTMLButtonElement>(null);
-  const n = photos.length;
-  useEffect(() => {
-    if (open === null) return;
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Escape') setOpen(null);
-      if (e.key === 'ArrowRight') setOpen((i) => (i === null ? i : (i + 1) % n));
-      if (e.key === 'ArrowLeft') setOpen((i) => (i === null ? i : (i - 1 + n) % n));
-    };
-    document.addEventListener('keydown', onKey);
-    const prev = document.body.style.overflow;
-    document.body.style.overflow = 'hidden';
-    closeBtn.current?.focus();
-    return () => {
-      document.removeEventListener('keydown', onKey);
-      document.body.style.overflow = prev;
-    };
-  }, [open === null, n]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  const shown = open === null ? null : photos[open];
-  return (
-    <div>
-      <p className="font-semibold">{t.progressPhotos}</p>
-      <ul className="mt-3 grid grid-cols-2 gap-3 sm:grid-cols-3">
-        {photos.map((p, i) => (
-          <li key={p.id}>
-            <button type="button" onClick={() => setOpen(i)} className="group block w-full overflow-hidden rounded-2xl border border-site-line bg-white text-left">
-              <SiteImage image={p.image} fallback="" alt={p.image.alt} className="aspect-4/3 transition-transform duration-500 ease-site-out group-hover:scale-105" />
-              <p className="px-3 py-2 text-sm">
-                <span className="font-medium">{p.tower_name ?? ''}</span> <span className="text-site-muted">· {photoDate(p.taken_on)}</span>
-              </p>
-            </button>
-          </li>
-        ))}
-      </ul>
-      {shown &&
-        createPortal(
-          <div className="site fixed inset-0 z-[70] flex flex-col bg-site-night-deep/95 font-site text-white motion-safe:animate-[site-fade-in_.2s_ease-out]" role="dialog" aria-modal="true" aria-label={t.progressPhotos}>
-            <div className="flex items-center justify-between p-4">
-              <p className="text-sm text-white/80">
-                {shown.tower_name ? `${shown.tower_name} · ` : ''}
-                {photoDate(shown.taken_on)}
-              </p>
-              <button ref={closeBtn} type="button" aria-label="Close photo" onClick={() => setOpen(null)} className="grid size-11 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                <X className="size-5" />
-              </button>
-            </div>
-            <div className="relative flex flex-1 items-center justify-center px-4 pb-8">
-              {n > 1 && (
-                <button type="button" aria-label="Previous photo" onClick={() => setOpen((open! - 1 + n) % n)} className="absolute left-4 grid size-12 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                  <ChevronLeft className="size-6" />
-                </button>
-              )}
-              <SiteImage key={shown.id} image={shown.image} fallback="" alt={shown.image.alt} className="h-[75vh] w-full max-w-5xl bg-transparent motion-safe:animate-[site-fade-in_.3s_ease-out] [&_img]:object-contain" />
-              {n > 1 && (
-                <button type="button" aria-label="Next photo" onClick={() => setOpen((open! + 1) % n)} className="absolute right-4 grid size-12 place-items-center rounded-full bg-white/10 hover:bg-white/20">
-                  <ChevronRight className="size-6" />
-                </button>
-              )}
-            </div>
-          </div>,
-          document.getElementById('site-root') ?? document.body,
-        )}
-    </div>
   );
 }
 

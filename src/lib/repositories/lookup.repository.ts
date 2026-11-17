@@ -247,10 +247,10 @@ class LookupRepository extends BaseRepository<LookupValue> {
    * would be worse than admitting there isn't one.
    */
   async usageCount(row: LookupValue): Promise<number | null> {
-    // Countable since Tier 3.3, because an expense stores the code.
-    if (row.category === 'cost_category' && row.code) {
-      const code = row.code;
-      return (await db.expenses.toArray()).filter((e) => e.cost_category === code).length;
+    // a revenue entry stores the head it was recorded under
+    if ((row.category === 'revenue_income_head' || row.category === 'revenue_expense_head') && row.value) {
+      const value = row.value;
+      return (await db.revenue_entries.toArray()).filter((e) => e.head === value).length;
     }
     if (row.category !== 'document_type' || !row.scope) return null;
     const docs = await db.documents

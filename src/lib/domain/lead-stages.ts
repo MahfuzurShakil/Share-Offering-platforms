@@ -16,7 +16,7 @@ import { BUDGET_RANGE_OPTIONS, type LeadActivityType, type LeadStatus } from '@/
 export interface LeadStageField {
   key: string;
   label: string;
-  type: 'text' | 'select' | 'date' | 'money' | 'project' | 'unit';
+  type: 'text' | 'select' | 'date' | 'money' | 'project';
   options?: readonly string[];
   placeholder?: string;
   required?: boolean;
@@ -87,7 +87,6 @@ export const LEAD_STAGES: Partial<Record<LeadStatus, LeadStage>> = {
     activity: 'site_visit',
     fields: [
       { key: 'project', label: 'Project visited', type: 'project', required: true, updates: 'interested_project_id' },
-      { key: 'unit', label: 'Unit they liked', type: 'unit', updates: 'interested_unit_id' },
       { key: 'came_with', label: 'Came with', type: 'text', placeholder: 'e.g. wife and father' },
       {
         key: 'feedback',
@@ -105,14 +104,14 @@ export const LEAD_STAGES: Partial<Record<LeadStatus, LeadStage>> = {
     to: 'negotiation',
     title: 'Negotiation Started',
     button: 'Start Negotiation',
-    meaning: 'Price and terms for one unit are being discussed.',
+    meaning: 'How many shares, at what price and on what terms, are being discussed.',
     dateLabel: 'Started on',
     activity: 'meeting',
     fields: [
       { key: 'project', label: 'Project', type: 'project', required: true, updates: 'interested_project_id' },
-      { key: 'unit', label: 'Unit under discussion', type: 'unit', required: true, updates: 'interested_unit_id' },
+      { key: 'shares', label: 'Shares under discussion', type: 'text', placeholder: 'e.g. 4' },
       { key: 'our_price', label: 'Our price (BDT)', type: 'money' },
-      { key: 'buyer_offer', label: "Buyer's offer (BDT)", type: 'money' },
+      { key: 'buyer_offer', label: "Investor's offer (BDT)", type: 'money' },
       { key: 'payment', label: 'How they want to pay', type: 'select', options: ['Full payment', 'Installments'] },
     ],
     notesPlaceholder: 'Discount asked, parking, handover expectations…',

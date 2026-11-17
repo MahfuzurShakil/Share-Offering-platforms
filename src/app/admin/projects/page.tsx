@@ -33,7 +33,7 @@ import {
   projectStatusLabel,
 } from '@/lib/domain/project';
 import { PROJECT_SALES_STATUSES, type ProjectSalesStatus } from '@/lib/db/types';
-import { projectRepository, unitRepository } from '@/lib/repositories';
+import { projectRepository, projectOwnership } from '@/lib/repositories';
 import { formatBdt, formatDate } from '@/lib/utils/format';
 
 type SortKey = 'newest' | 'oldest' | 'completion_soon' | 'name';
@@ -62,22 +62,21 @@ export default function ProjectsListPage() {
 
   const allProjects = useLiveQuery(() => projectRepository.getAll(), []);
 
-  /** Unit roll-up per project, so a card can show "48 units · 12 sold". */
-  const unitStats = useLiveQuery(async () => {
-    const stats = new Map<string, { total: number; available: number }>();
+  /**
+   * How much of each project has been sold as shares, and what that raised, so
+   * several projects can be compared without opening each one.
+   */
+  const shareStats = useLiveQuery(async () => {
+    const stats = new Map<string, { sold_pct: number; raised: number }>();
     for (const project of (await projectRepository.getAll()) ?? []) {
-      const units = await unitRepository.listForProject(project.id);
+      const own = await projectOwnership(project.id);
       stats.set(project.id, {
-        total: units.length,
-        available: units.filter((u) => u.status === 'available').length,
+        sold_pct: Math.round(own.customers_pct * 10) / 10,
+        raised: own.rows.reduce((t, r) => t + r.raised, 0),
       });
     }
     return stats;
   }, []);
-
-  /** Sold % and booked value, so four projects can be compared without
-      opening each one's Finance tab (P-4). */
-  const commercials = useLiveQuery(() => projectRepository.commercialSummaries(), []);
 
   const rows = useMemo(() => {
     const list = (projects ?? []).filter((p) => sales === 'all' || projectSalesStatus(p) === sales);
@@ -267,8 +266,7 @@ export default function ProjectsListPage() {
               <ResultsLayout view={view}>
                 {paged.pageRows.map((project) => {
                   const meta = PROJECT_STATUS_META[project.status];
-                  const stats = unitStats?.get(project.id);
-                  const money = commercials?.[project.id];
+                  const stats = shareStats?.get(project.id);
                   return (
                     <ResultCard
                       key={project.id}
@@ -307,26 +305,13 @@ export default function ProjectsListPage() {
                           <Badge tone={PROJECT_SALES_STATUS_META[projectSalesStatus(project)].tone}>
                             {PROJECT_SALES_STATUS_META[projectSalesStatus(project)].label}
                           </Badge>
-                          {stats && stats.total > 0 && (
-                            <Badge tone="teal">
-                              {/* shares and plots are not "units" (QA audit P-09) */}
-                              {stats.total}{' '}
-                              {(stats.total === 1
-                                ? projectShape(project.project_type).labels.item
-                                : projectShape(project.project_type).labels.itemPlural
-                              ).toLowerCase()}{' '}
-                              · {stats.available} available
-                            </Badge>
+                          {stats && stats.sold_pct > 0 && (
+                            <Badge tone="blue">{stats.sold_pct}% of the project sold</Badge>
                           )}
-                          {money && money.units > 0 && (
-                            <Badge tone={money.sold_pct > 0 ? 'blue' : 'neutral'}>
-                              {money.sold_pct}% sold
-                            </Badge>
-                          )}
-                          {money && money.booked_value > 0 && (
+                          {stats && stats.raised > 0 && (
                             <Badge tone="green">
                               <Wallet className="size-3.5" />
-                              {formatBdt(money.booked_value)} booked
+                              {formatBdt(stats.raised)} raised
                             </Badge>
                           )}
                           {project.is_public && (

@@ -1,7 +1,12 @@
 'use client';
 
 import { useState } from 'react';
-import type { MonthFlow } from '@/lib/repositories';
+/** A month of money in and out, as the dashboard builds it. */
+export interface MonthFlow {
+  month: string;
+  money_in: number;
+  money_out: number;
+}
 import { formatBdt } from '@/lib/utils/format';
 import { cn } from '@/lib/utils/cn';
 

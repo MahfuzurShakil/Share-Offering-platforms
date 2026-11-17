@@ -1,7 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { Briefcase, CalendarClock, Home, Receipt, Sparkles, Wallet } from 'lucide-react';
+import { Briefcase, CalendarClock, Receipt, Sparkles, Wallet } from 'lucide-react';
 import { formatDay, PAYMENT_METHOD_LABEL } from '@/lib/domain/investor-portal';
 import { useCustomerPortal } from '../CustomerPortalProvider';
 import { NextPaymentCard } from '../NextPaymentCard';
@@ -18,7 +18,6 @@ export function OverviewPage() {
   const c = snapshot.customer;
   const shares = portfolio.holdings.reduce((t, v) => t + v.holding.shares, 0);
   const paidPct = portfolio.total_invested ? Math.round((portfolio.paid / portfolio.total_invested) * 100) : 0;
-  const buyerOnly = portfolio.shares.length === 0 && portfolio.homes.length > 0;
   const overdue = portfolio.holdings.reduce((t, v) => t + v.overdue_amount, 0);
   const upcoming = portfolio.holdings
     .flatMap((view) => view.schedule.filter((i) => i.status !== 'paid').slice(0, 3).map((i) => ({ view, i })))
@@ -35,37 +34,21 @@ export function OverviewPage() {
       <PageHeading
         eyebrow={new Date(`${snapshot.today}T00:00:00`).toLocaleDateString('en-GB', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' })}
         title={`${greeting()}, ${c.full_name.split(' ')[0]}`}
-        description={buyerOnly ? 'Here is where your home and its payments stand today.' : portfolio.homes.length ? 'Here is where your homes, investments and payments stand today.' : 'Here is where your investments and payments stand today.'}
+        description="Here is where your investments and payments stand today."
       />
 
       <NextPaymentCard portfolio={portfolio} today={snapshot.today} />
 
       <div className="grid gap-4 sm:grid-cols-3">
-        {portfolio.homes.length > 0 && portfolio.shares.length === 0 ? (
-          <StatCard
-            icon={Home}
-            label="Total price"
-            value={<Money amount={portfolio.total_invested} />}
-            hint={`${portfolio.homes.length} home${portfolio.homes.length === 1 ? '' : 's'} · ${portfolio.homes.map((v) => v.holding.home?.unit_code).join(', ')}`}
-            tone="primary"
-            href="/customer/homes"
-            linkLabel="View my homes"
-          />
-        ) : (
-          <StatCard
-            icon={Briefcase}
-            label={portfolio.homes.length ? 'Total value' : 'Total investment'}
-            value={<Money amount={portfolio.total_invested} />}
-            hint={
-              portfolio.homes.length
-                ? `${portfolio.homes.length} home${portfolio.homes.length === 1 ? '' : 's'} · ${portfolio.shares.length} project${portfolio.shares.length === 1 ? '' : 's'} · ${shares} shares`
-                : `${portfolio.holdings.length} projects · ${shares} shares`
-            }
-            tone="primary"
-            href="/customer/investments"
-            linkLabel="View my investments"
-          />
-        )}
+        <StatCard
+          icon={Briefcase}
+          label="Total investment"
+          value={<Money amount={portfolio.total_invested} />}
+          hint={`${portfolio.holdings.length} projects · ${shares} shares`}
+          tone="primary"
+          href="/customer/investments"
+          linkLabel="View my investments"
+        />
         <StatCard icon={Wallet} label="Paid so far" value={<Money amount={portfolio.paid} />} hint={`${paidPct}% of the total price is paid`} />
         <StatCard
           icon={CalendarClock}
@@ -89,9 +72,8 @@ export function OverviewPage() {
             <div className="mb-4">
               <h2 className="text-xl font-semibold">New opportunities</h2>
               <p className="mt-1 text-[15px] text-site-muted">
-                {buyerOnly
-                  ? 'Own a part of a project as well as your home — shares on offer now. Choose how many you want and our team will prepare the agreement.'
-                  : 'Projects you may like — shares on offer now. Choose how many you want and our team will prepare the agreement.'}
+                Projects you may like — shares on offer now. Choose how many you want and our team
+                will prepare the agreement.
               </p>
             </div>
             <div className="grid gap-5 md:grid-cols-2">

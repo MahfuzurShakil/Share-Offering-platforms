@@ -1,9 +1,7 @@
 import { db } from '../db/database';
-import type { BankAccount, Customer, CustomerUpload, OfflinePaymentMethod, PaymentMethod, PaymentSubmission, SharePaymentMethod } from '../db/types';
+import type { BankAccount, Customer, CustomerUpload, OfflinePaymentMethod, PaymentSubmission, SharePaymentMethod } from '../db/types';
 import { nowIso } from '../utils/id';
 import { todayLocal } from '../utils/format';
-import { bookingRepository } from './booking.repository';
-import { homeReceiptNo } from './investor/investor.repository';
 import { shareSaleRepository } from './share-sale.repository';
 
 /*
@@ -27,13 +25,6 @@ const TO_SHARE_METHOD: Record<OfflinePaymentMethod, SharePaymentMethod> = {
   cheque_deposit: 'cheque',
   pay_order: 'bank_transfer',
 };
-const TO_BOOKING_METHOD: Record<OfflinePaymentMethod, PaymentMethod> = {
-  bank_deposit: 'bank',
-  bank_transfer: 'bank',
-  cheque_deposit: 'cheque',
-  pay_order: 'bank',
-};
-
 export interface SubmissionRow {
   submission: PaymentSubmission;
   customer?: Customer;
@@ -47,12 +38,11 @@ const sameRef = (a?: string | null, b?: string | null) => !!a && !!b && a.trim()
 
 /** Every reported payment, the ones to check first, each with what might make it a duplicate. */
 export async function paymentSubmissionInbox(): Promise<SubmissionRow[]> {
-  const [rows, customers, accounts, sharePays, bookingPays] = await Promise.all([
+  const [rows, customers, accounts, sharePays] = await Promise.all([
     db.payment_submissions.toArray(),
     db.customers.toArray(),
     db.bank_accounts.toArray(),
     db.share_payments.toArray(),
-    db.payments.toArray(),
   ]);
   const slips = await db.customer_uploads.bulkGet(rows.map((r) => r.slip_upload_id ?? ''));
   const customerById = new Map(customers.map((c) => [c.id, c]));
@@ -67,7 +57,7 @@ export async function paymentSubmissionInbox(): Promise<SubmissionRow[]> {
         if (byRef) duplicates.push(`Same reference as ${byRef.code}`);
         const byAmount = others.find((o) => o.amount === r.amount && o.paid_on === r.paid_on && o.paid_into_account_id === r.paid_into_account_id);
         if (byAmount && byAmount !== byRef) duplicates.push(`Same amount, date and account as ${byAmount.code}`);
-        const paid = sharePays.find((p) => sameRef(p.reference, r.reference)) ?? bookingPays.find((p) => sameRef(p.reference_no, r.reference));
+        const paid = sharePays.find((p) => sameRef(p.reference, r.reference));
         if (paid) duplicates.push(`A payment with this reference is already recorded`);
       }
       return { submission: r, customer: customerById.get(r.customer_id), account: r.paid_into_account_id ? accountById.get(r.paid_into_account_id) : undefined, slip: slips[i] ?? undefined, duplicates };
@@ -94,24 +84,8 @@ export const paymentSubmissionRepository = {
       );
       paymentId = p.id;
       receiptNo = p.code;
-    } else if (r.booking_id) {
-      const before = new Set((await db.payments.where('booking_id').equals(r.booking_id).toArray()).map((p) => p.id));
-      await bookingRepository.recordPayment(r.booking_id, {
-        amount: r.amount,
-        payment_date: r.paid_on,
-        payment_method: TO_BOOKING_METHOD[r.method],
-        reference_no: r.reference,
-        notes,
-        received_by: userId,
-        account_id: input.account_id,
-        channel: 'office',
-        method_detail: OFFLINE_METHOD_LABEL[r.method],
-      });
-      const added = (await db.payments.where('booking_id').equals(r.booking_id).toArray()).find((p) => !before.has(p.id));
-      paymentId = added?.id ?? null;
-      receiptNo = added ? homeReceiptNo(added) : null;
     } else {
-      throw new Error('This payment is not linked to a purchase or booking.');
+      throw new Error('This payment is not linked to a share purchase.');
     }
     const ts = nowIso();
     await db.payment_submissions.update(id, { status: 'confirmed', reviewed_by: userId, reviewed_at: ts, review_note: null, payment_id: paymentId, receipt_no: receiptNo, paid_into_account_id: input.account_id, updated_at: ts });

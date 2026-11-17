@@ -16,7 +16,6 @@ import {
   UserRound,
   X,
   type LucideIcon,
-  Home,
   TrendingUp,
 } from 'lucide-react';
 import { BrandMark } from '@/components/public/BrandMark';
@@ -28,7 +27,6 @@ import { useCustomerPortal } from './CustomerPortalProvider';
 /** BUYER-PORTAL-PLAN.md §5 — `role` items show only to a customer who holds that kind of thing */
 const NAV: { href: string; label: string; icon: LucideIcon; exact?: boolean; role?: 'buyer' | 'investor' }[] = [
   { href: '/customer', label: 'Overview', icon: LayoutDashboard, exact: true },
-  { href: '/customer/homes', label: 'My homes', icon: Home, role: 'buyer' },
   { href: '/customer/investments', label: 'My investments', icon: Briefcase, role: 'investor' },
   // REVENUE-SHARE-PLAN.md §5.3 — profit shared from the projects they hold
   { href: '/customer/earnings', label: 'My earnings', icon: TrendingUp, role: 'investor' },

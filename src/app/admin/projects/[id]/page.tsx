@@ -1,53 +1,29 @@
 'use client';
 
-import { ProjectStageCosts } from '@/components/admin/projects/ProjectStageCosts';
-import { RevenueTab } from '@/components/admin/revenue/RevenueTab';
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, Globe, HardHat, Pencil, Star, Trash2, Wallet } from 'lucide-react';
-import { isSiteActive } from '@/lib/domain/site-progress';
+import { ArrowLeft, Globe, Pencil, Star, Trash2 } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
-import { JvAllocationCard } from '@/components/admin/projects/JvAllocationCard';
-import { ProjectLandCard } from '@/components/admin/projects/ProjectLandCard';
-import { useProjectIsJv } from '@/components/admin/projects/useProjectIsJv';
 import { ProjectGalleryPanel } from '@/components/admin/projects/ProjectGalleryPanel';
-import { ProjectStatusCard } from '@/components/admin/projects/ProjectStatusCard';
 import { ProjectSalesCard } from '@/components/admin/projects/ProjectSalesCard';
-import { ProjectTimeline } from '@/components/admin/projects/ProjectTimeline';
-import { PlotDevelopmentCard } from '@/components/admin/projects/PlotDevelopmentCard';
-import { SuccessionCard } from '@/components/admin/projects/SuccessionCard';
-import { TowersUnitsPanel } from '@/components/admin/projects/TowersUnitsPanel';
+import { RevenueTab } from '@/components/admin/revenue/RevenueTab';
 import { Badge } from '@/components/ui/Badge';
-import { ViewOnlyArea, ViewOnlyNotice } from '@/components/ui/ViewOnly';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
+import { ViewOnlyArea, ViewOnlyNotice } from '@/components/ui/ViewOnly';
+import { useMockSession } from '@/lib/auth/mock-session';
+import { canEdit } from '@/lib/domain/access';
 import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
-import {
-  PROJECT_TYPE_LABEL,
-  UNIT_STATUS_META,
-  projectShape,
-  shapeIsBuilt,
-  siteRoadWidthFt,
-} from '@/lib/domain/project';
+import { PROJECT_TYPE_LABEL } from '@/lib/domain/project';
 import { projectRepository, userRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatDate } from '@/lib/utils/format';
-import { UNIT_STATUSES } from '@/lib/db/types';
 
-type Tab =
-  | 'overview'
-  | 'towers'
-  | 'allocation'
-  | 'costs'
-  | 'timeline'
-  | 'revenue'
-  | 'documents';
+type Tab = 'overview' | 'revenue' | 'documents';
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -58,7 +34,14 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-/** Project detail — Design Reference A.8 (sidebar cards + tabbed main column). */
+/**
+ * Project detail — Design Reference A.8 (sidebar cards + tabbed main column).
+ *
+ * Phase 1 is the share-sale build: a project is its master record, the income
+ * and profit it earns, and its papers. The prototype's inventory, JV
+ * allocation, stage-cost and pipeline-timeline tabs belong to the land and
+ * construction modules and return in Phase 2.
+ */
 export default function ProjectDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
@@ -67,12 +50,11 @@ export default function ProjectDetailPage() {
   // QA audit X-01 — viewing a project is not changing it (Section 9.6)
   const { role } = useMockSession();
   const mayEdit = canEdit(role, 'project');
-  // opening, pausing and publishing sales is also the sales team's call
-  const maySell = mayEdit || canEdit(role, 'booking');
+  // opening and pausing sales is also the sales team's call
+  const maySell = mayEdit || canEdit(role, 'share_sale');
 
-  const project = useLiveQuery(() => projectRepository.getWithRelations(id), [id]);
-  const isJv = useProjectIsJv(id);
-  // QA 2026-10-11 — a project with buyers or money against it is closed, not deleted
+  const project = useLiveQuery(() => projectRepository.get(id), [id]);
+  // a project with purchases or money against it is closed, not deleted
   const deleteBlocked = useLiveQuery(() => projectRepository.deleteBlockReason(id), [id]);
   const manager = useLiveQuery(
     () =>
@@ -96,29 +78,8 @@ export default function ProjectDetailPage() {
     );
   }
 
-  /*
-   * v26 — the tab strip follows the project shape.
-   *
-   * "Towers & Units" is wrong on a plot project and meaningless on a share
-   * register, and Site Progress is a construction log: a share project reports
-   * none, and a plot project's filling and roads are land development recorded
-   * against the land in Module 1, not here. Hiding the tab is not hiding the
-   * work — it is not being in two places.
-   */
-  const shape = projectShape(project.project_type);
-  const inventoryLabel =
-    shape.container === 'none'
-      ? `${shape.labels.itemPlural} (${project.unit_total})`
-      : `${shape.labels.containerPlural} & ${shape.labels.itemPlural} (${project.unit_total})`;
-
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
-    { key: 'towers', label: inventoryLabel },
-    // landowner allocation exists only on joint-venture land
-    ...(isJv ? [{ key: 'allocation' as Tab, label: 'JV Allocation' }] : []),
-    // client, 2026-10-21: planning, design and approval cost money too
-    { key: 'costs', label: 'Costs' },
-    { key: 'timeline', label: 'Timeline' },
     // REVENUE-SHARE-PLAN.md — a project that earns money shares its profit
     { key: 'revenue', label: 'Income & Profit' },
     { key: 'documents', label: 'Documents' },
@@ -138,24 +99,6 @@ export default function ProjectDetailPage() {
         subtitle={`${project.code} · ${project.location_summary ?? PROJECT_TYPE_LABEL[project.project_type]}`}
         action={
           <div className="flex flex-wrap gap-2">
-            {/*
-              Site work lives in Construction once building has started
-              (PLATFORM-REPLAN.md Phase 2): work breakdown, site log,
-              materials, photos.
-            */}
-            {shapeIsBuilt(shape) && (isSiteActive(project.status) || project.status === 'closed') && (
-              <Link href={`/admin/site-progress/${project.id}`}>
-                <Button>
-                  <HardHat className="size-4" /> Open construction
-                </Button>
-              </Link>
-            )}
-            {/* all money lives in Finance (client feedback 2026-10-11) */}
-            <Link href={`/admin/finance/projects/${project.id}`}>
-              <Button variant="outline">
-                <Wallet className="size-4" /> Finance
-              </Button>
-            </Link>
             {mayEdit && (
               <Link href={`/admin/projects/${project.id}/edit`}>
                 <Button variant="outline">
@@ -195,174 +138,83 @@ export default function ProjectDetailPage() {
           </div>
 
           <ViewOnlyArea readOnly={!mayEdit}>
-          {tab === 'overview' && (
-            <div className="space-y-5">
-              <Card>
-                <CardHeader title="Project Information" />
-                <Row label="Name" value={project.name} />
-                <Row label="Code" value={project.code} />
-                <Row label="Type" value={PROJECT_TYPE_LABEL[project.project_type]} />
-                <Row label="Location summary" value={project.location_summary} />
-                <Row
-                  label="Total land area"
-                  value={
-                    project.total_land_area
-                      ? `${project.total_land_area} ${LAND_SIZE_UNIT_LABEL[project.total_land_area_unit ?? 'katha']}`
-                      : '—'
-                  }
-                />
-                {/* E2E 2026-10-12 #27 — the same words the project form uses for this type */}
-                {shape.item !== 'share' && (
-                  <Row
-                    label={shape.item === 'plot' ? 'Layout planner / architect' : 'Architect'}
-                    value={project.architect}
-                  />
-                )}
-                {/* 2026-10-22 — read from the land, the only place it is typed */}
-                <Row
-                  label="Front road width"
-                  value={(() => {
-                    const w = siteRoadWidthFt(project.lands);
-                    return w != null ? `${w} ft (from the land)` : null;
-                  })()}
-                />
-                {/* Scope v3 §3.3 — who runs this project (2026-10-04) */}
-                <Row label="Project manager" value={manager?.name} />
-                <Row
-                  label={
-                    shape.item === 'share'
-                      ? 'Sales start'
-                      : shape.item === 'plot'
-                        ? 'Development start'
-                        : 'Construction start'
-                  }
-                  value={formatDate(project.expected_start_date)}
-                />
-                <Row
-                  label={
-                    shape.item === 'share'
-                      ? 'Target sell-out'
-                      : shape.item === 'plot'
-                        ? 'Plot handover target'
-                        : 'Handover target'
-                  }
-                  value={formatDate(project.expected_completion_date)}
-                />
-                {shape.item !== 'share' && (
-                  <Row label="Actual start" value={formatDate(project.actual_start_date)} />
-                )}
-              </Card>
-
-              {/* v29 — the land under the project, its status and cost */}
-              <ProjectLandCard projectId={project.id} lands={project.lands} />
-
-              {(project.amenities.length > 0 || project.surroundings) && (
+            {tab === 'overview' && (
+              <div className="space-y-5">
                 <Card>
-                  <CardHeader title="Amenities & Surroundings" />
-                  {project.amenities.length > 0 && (
-                    <div className="mb-4 flex flex-wrap gap-2">
-                      {project.amenities.map((a) => (
-                        <Badge key={a} tone="teal">
-                          {a}
-                        </Badge>
-                      ))}
-                    </div>
-                  )}
-                  {project.surroundings && (
-                    <p className="whitespace-pre-wrap text-sm text-ink-muted">
-                      {project.surroundings}
-                    </p>
-                  )}
+                  <CardHeader title="Project Information" />
+                  <Row label="Name" value={project.name} />
+                  <Row label="Code" value={project.code} />
+                  <Row label="Type" value={PROJECT_TYPE_LABEL[project.project_type]} />
+                  <Row label="Location summary" value={project.location_summary} />
+                  <Row
+                    label="Total land area"
+                    value={
+                      project.total_land_area
+                        ? `${project.total_land_area} ${LAND_SIZE_UNIT_LABEL[project.total_land_area_unit ?? 'katha']}`
+                        : '—'
+                    }
+                  />
+                  {/* Scope v3 §3.3 — who runs this project */}
+                  <Row label="Project manager" value={manager?.name} />
+                  <Row label="Sales start" value={formatDate(project.expected_start_date)} />
+                  <Row
+                    label="Target sell-out"
+                    value={formatDate(project.expected_completion_date)}
+                  />
                 </Card>
-              )}
-              {/* Phase 3 — a plot scheme's progress is its land development */}
-              {shape.progress === 'development' && <PlotDevelopmentCard projectId={project.id} />}
-              {/* Phase 3 — the share register's holders, or the one this grew out of */}
-              <SuccessionCard project={project} />
-            </div>
-          )}
 
-          {tab === 'towers' && (
-            <TowersUnitsPanel projectId={project.id} projectType={project.project_type} projectStatus={project.status} />
-          )}
+                {(project.amenities.length > 0 || project.surroundings) && (
+                  <Card>
+                    <CardHeader title="Amenities & Surroundings" />
+                    {project.amenities.length > 0 && (
+                      <div className="mb-4 flex flex-wrap gap-2">
+                        {project.amenities.map((a) => (
+                          <Badge key={a} tone="teal">
+                            {a}
+                          </Badge>
+                        ))}
+                      </div>
+                    )}
+                    {project.surroundings && (
+                      <p className="whitespace-pre-wrap text-sm text-ink-muted">
+                        {project.surroundings}
+                      </p>
+                    )}
+                  </Card>
+                )}
+              </div>
+            )}
 
+            {tab === 'revenue' && <RevenueTab projectId={project.id} mayEdit={mayEdit} />}
 
-          {/* Section 7.11 — the material cost chain, read for this project */}
+            {tab === 'documents' && (
+              <div className="space-y-5">
+                {/*
+                  Pictures first, because that is what a project is sold on, and
+                  deliberately not a fourth tab.
+                */}
+                <Card>
+                  <CardHeader title="Pictures" />
+                  <p className="-mt-2 mb-4 text-sm text-ink-muted">
+                    What the public website shows, and which one it leads with.
+                  </p>
+                  <ProjectGalleryPanel project={project} />
+                </Card>
 
-          {/* Section 8.3 — what the project was planned to cost, against what it has */}
-
-          {tab === 'allocation' && <JvAllocationCard projectId={project.id} />}
-
-          {tab === 'costs' && <ProjectStageCosts project={project} />}
-
-          {tab === 'timeline' && (
-            <Card>
-              <CardHeader title="Pipeline history" />
-              <ProjectTimeline projectId={project.id} />
-            </Card>
-          )}
-
-          {tab === 'revenue' && <RevenueTab projectId={project.id} mayEdit={mayEdit} />}
-
-          {tab === 'documents' && (
-            <div className="space-y-5">
-              {/*
-                Pictures first, because that is what a project is sold on, and
-                deliberately not an eighth tab — the strip already wraps to
-                three rows on a phone.
-              */}
-              <Card>
-                <CardHeader title="Pictures" />
-                <p className="-mt-2 mb-4 text-sm text-ink-muted">
-                  What the public website shows, and which one it leads with.
-                </p>
-                <ProjectGalleryPanel project={project} />
-              </Card>
-
-              <Card>
-                <CardHeader title="Documents" />
-                <DocumentsPanel entityType="project" entityId={project.id} />
-              </Card>
-            </div>
-          )}
+                <Card>
+                  <CardHeader title="Documents" />
+                  <DocumentsPanel entityType="project" entityId={project.id} />
+                </Card>
+              </div>
+            )}
           </ViewOnlyArea>
         </div>
 
         <aside className="min-w-0 space-y-5 lg:order-2">
-          <ViewOnlyArea readOnly={!mayEdit}>
-            <ProjectStatusCard project={project} />
-          </ViewOnlyArea>
-          {/* v29 — selling runs beside the build stages, not inside them */}
+          {/* selling runs beside the project, not inside it */}
           <ViewOnlyArea readOnly={!maySell}>
-            <ProjectSalesCard project={project} lands={project.lands} />
+            <ProjectSalesCard project={project} />
           </ViewOnlyArea>
-
-          <Card>
-            <CardHeader title="Inventory" />
-            {project.unit_total === 0 ? (
-              <p className="text-sm text-ink-muted">
-                No {shape.labels.itemPlural.toLowerCase()} yet
-                {shape.container === 'none'
-                  ? ' — generate the register.'
-                  : ` — add a ${shape.labels.container.toLowerCase()} and generate them.`}
-              </p>
-            ) : (
-              <>
-                {/* a share register's single hidden container is not a count worth showing */}
-                {shape.container !== 'none' && (
-                  <Row label={shape.labels.containerPlural} value={project.towers.length} />
-                )}
-                <Row label={`Total ${shape.labels.itemPlural.toLowerCase()}`} value={project.unit_total} />
-                {UNIT_STATUSES.filter((s) => project.unit_counts[s]).map((s) => (
-                  <Row
-                    key={s}
-                    label={UNIT_STATUS_META[s].label}
-                    value={<Badge tone={UNIT_STATUS_META[s].tone}>{project.unit_counts[s]}</Badge>}
-                  />
-                ))}
-              </>
-            )}
-          </Card>
 
           <Card>
             <CardHeader title="Public Website" />
@@ -377,7 +229,7 @@ export default function ProjectDetailPage() {
               )}
             </div>
             <p className="mt-3 text-xs text-ink-muted">
-              Only whitelisted fields reach the public portal — cost, discount and landowner details
+              Only whitelisted fields reach the public portal — cost, margin and partner terms
               never leave the admin.
             </p>
           </Card>
@@ -395,10 +247,7 @@ export default function ProjectDetailPage() {
         title={`Delete ${project.code}`}
         subtitle={project.name}
         confirmLabel="Delete project"
-        message={
-          deleteBlocked ??
-          'This deletes the project with its towers, units, land links and documents. The lands stay as they are and simply stop being linked. It cannot be undone.'
-        }
+        message={deleteBlocked ?? 'This deletes the project with its documents. It cannot be undone.'}
         disabled={Boolean(deleteBlocked)}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={async () => {

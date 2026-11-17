@@ -102,10 +102,7 @@ class LeadRepository extends BaseRepository<Lead> {
        * inquiry" and could not tell the buyer had moved on to another flat.
        */
       const project = input.interested_project_id ? await db.projects.get(input.interested_project_id) : undefined;
-      const unit = input.interested_unit_id ? await db.units.get(input.interested_unit_id) : undefined;
-      const about = project
-        ? ` about ${unit ? `${unit.code} at ` : ''}${project.name} (${project.code})`
-        : '';
+      const about = project ? ` about ${project.name} (${project.code})` : '';
       await leadActivityRepository.create(
         {
           lead_id: existing.id,
@@ -128,7 +125,6 @@ class LeadRepository extends BaseRepository<Lead> {
       const fill: Partial<Lead> = {};
       if (!existing.interested_project_id && project) {
         fill.interested_project_id = project.id;
-        if (unit) fill.interested_unit_id = unit.id;
       }
       if (!existing.budget_range && input.budget_range) fill.budget_range = input.budget_range;
       if (!existing.email && input.email) fill.email = input.email;
@@ -248,16 +244,17 @@ class LeadRepository extends BaseRepository<Lead> {
    * obvious reason.
    */
   async followUpQueue(today: string): Promise<Array<{ lead: Lead; date: string }>> {
-    const [due, leads, bookings] = await Promise.all([
+    const [due, leads, customers, sales] = await Promise.all([
       this.followUpDueMap(),
       db.leads.toArray(),
-      db.bookings.toArray(),
+      db.customers.toArray(),
+      db.share_sales.toArray(),
     ]);
 
+    // a lead who has bought shares is not still being chased
+    const bought = new Set(sales.filter((s) => s.status !== 'cancelled').map((s) => s.customer_id));
     const withLiveBooking = new Set(
-      bookings
-        .filter((b) => b.status !== 'cancelled' && b.lead_id)
-        .map((b) => b.lead_id as string),
+      customers.filter((c) => c.lead_id && bought.has(c.id)).map((c) => c.lead_id as string),
     );
 
     return leads
@@ -290,7 +287,7 @@ class LeadRepository extends BaseRepository<Lead> {
       project: lead.interested_project_id
         ? await db.projects.get(lead.interested_project_id)
         : undefined,
-      unit: lead.interested_unit_id ? await db.units.get(lead.interested_unit_id) : undefined,
+      unit: undefined,
       activities,
       next_follow_up:
         lead.status === 'booked' || lead.status === 'lost'

@@ -2,72 +2,53 @@
 
 import { useState } from 'react';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { AlertTriangle, CheckCircle2, Circle, Lock, ShoppingBag } from 'lucide-react';
+import { CheckCircle2, Circle, ShoppingBag } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
-import { Checkbox, Field, TextInput } from '@/components/ui/Field';
-import type { Land, Project, ProjectSalesStatus } from '@/lib/db/types';
+import { Checkbox } from '@/components/ui/Field';
+import type { Project, ProjectSalesStatus } from '@/lib/db/types';
 import {
   PROJECT_SALES_STATUS_META,
   SALES_MOVE_LABEL,
-  allowedSalesMoves,
-  salesMoveBlockers,
-  landReadiness,
   projectSalesStatus,
-  projectShape,
-  salesOpenChecks,
 } from '@/lib/domain/project';
-import { companySettingsRepository, projectRepository } from '@/lib/repositories';
-import { todayLocal } from '@/lib/utils/format';
+import { projectRepository } from '@/lib/repositories';
 import { websiteReadiness, type WebsiteReadinessItem } from '@/lib/repositories/public/project.public.repository';
 
 const MOVE_QUESTION: Record<ProjectSalesStatus, string> = {
-  open: 'Bookings can be taken on this project from now on.',
-  paused: 'No new bookings until sales are opened again. Existing bookings are not affected.',
-  sold_out: 'No new bookings. Open sales again if a cancellation puts stock back on the market.',
+  open: 'Share offerings can be opened on this project from now on.',
+  paused: 'No new share purchases until sales are opened again. Purchases already made are not affected.',
+  sold_out: 'No new share purchases. Open sales again if a release puts shares back on the market.',
   not_open: '',
 };
 
 /**
- * v29 — whether the project is selling (PLATFORM-REPLAN.md §1.1).
+ * Whether the project is selling.
  *
- * Kept beside the build status rather than inside it: in Bangladesh sales
- * open around design and approval and run all through construction, so the
- * two move independently. Opening sales shows what the records say is still
- * missing — land not secured, plan approval not reached — as warnings, or as
- * blocks where Company Settings say so.
+ * Phase 1: sales move on their own, with nothing to check them against. The
+ * prototype gated this on the land being secured, the plan being approved and
+ * every unit carrying a price — all of which belong to the land and
+ * construction modules. What a share project is held to instead lives on the
+ * offering: its valuation, price per share and how much of the round is left.
  */
-export function ProjectSalesCard({ project, lands }: { project: Project; lands: Land[] }) {
+export function ProjectSalesCard({ project }: { project: Project }) {
   const [target, setTarget] = useState<ProjectSalesStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
-  const settings = useLiveQuery(() => companySettingsRepository.get(), []);
-  const readiness = useLiveQuery(() => projectRepository.readiness(project.id), [project.id, project.updated_at]);
   const website = useLiveQuery(() => websiteReadiness(project.id), [project.id, project.updated_at]);
-  // every unit has a buyer: suggest closing sales rather than waiting for somebody to notice
-  const allSpokenFor =
-    readiness !== undefined && readiness.unit_count > 0 && readiness.units_spoken_for >= readiness.unit_count;
-  const shape = projectShape(project.project_type);
-  const isShare = shape.item === 'share';
 
   const current = projectSalesStatus(project);
   const meta = PROJECT_SALES_STATUS_META[current];
-  // 2026-10-17 — what can be done with sales depends on where the project is
-  const moves = allowedSalesMoves(current, { status: project.status, shape });
-  const checks = salesOpenChecks({
-    status: project.status,
-    shape: projectShape(project.project_type),
-    land_readiness: landReadiness(lands),
-    block_without_land: Boolean(settings?.block_sales_without_land),
-    block_before_approval: Boolean(settings?.block_sales_before_approval),
-    unit_count: readiness?.unit_count,
-    units_unpriced: readiness?.units_unpriced,
-  });
-  // E2E 2026-10-12 #9 — sold out while stock is still unsold is said out loud
-  const unsold = readiness ? readiness.unit_count - readiness.units_spoken_for : 0;
-  const itemPlural = projectShape(project.project_type).labels.itemPlural.toLowerCase();
+  const moves: ProjectSalesStatus[] =
+    current === 'not_open'
+      ? ['open']
+      : current === 'open'
+        ? ['paused', 'sold_out']
+        : current === 'paused'
+          ? ['open', 'sold_out']
+          : ['open'];
 
   async function confirm() {
     if (!target) return;
@@ -75,23 +56,6 @@ export function ProjectSalesCard({ project, lands }: { project: Project; lands: 
     setError('');
     try {
       await projectRepository.setSalesStatus(project.id, target);
-      /*
-       * A land share's status follows its sales: once the register is sold
-       * out, the project is at "Sold Out", with no second click needed.
-       */
-      if (isShare && target === 'sold_out' && project.status === 'planning') {
-        await projectRepository.setStatus(
-          project.id,
-          'nearly_complete',
-          {
-            event_date: todayLocal(),
-            performed_by: null,
-            reference_no: null,
-            remarks: 'Every share sold; moved with the sales status.',
-          },
-          null,
-        );
-      }
       setTarget(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -100,76 +64,33 @@ export function ProjectSalesCard({ project, lands }: { project: Project; lands: 
     }
   }
 
-  const opening = target === 'open';
   return (
     <>
       <Card>
         <CardHeader title="Sales" action={<Badge tone={meta.tone}>{meta.label}</Badge>} />
         <p className="mb-3 text-xs text-ink-muted">
           {current === 'open'
-            ? 'Taking bookings. The project appears in the booking form.'
-            : 'Not taking bookings. The project is left out of the booking form.'}
+            ? 'Selling. Shares can be offered and purchases recorded on this project.'
+            : 'Not selling. The project is left out of new share offerings.'}
         </p>
-        {/* QA audit P-05 — bookings recorded while sales were never opened */}
-        {current === 'not_open' && (readiness?.units_spoken_for ?? 0) > 0 && (
-          <div className="mb-3 flex items-start gap-2 rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            <AlertTriangle className="mt-0.5 size-3.5 shrink-0" />
-            <span>
-              {readiness?.units_spoken_for}{' '}
-              {projectShape(project.project_type).labels.itemPlural.toLowerCase()} already have buyers
-              although sales were never opened. Open sales so the record matches what was sold.
-            </span>
-          </div>
-        )}
-        {current === 'open' && allSpokenFor && (
-          <div className="mb-3 rounded-xl border border-admin-200 bg-admin-50 p-3 text-sm text-admin-800">
-            Every {projectShape(project.project_type).labels.item.toLowerCase()} has a buyer.
-            <Button size="sm" className="mt-2 w-full" onClick={() => setTarget('sold_out')}>
-              Mark sold out
-            </Button>
-          </div>
-        )}
         <div className="space-y-2">
-          {moves.length === 0 && (
-            <p className="text-xs text-ink-muted">
-              {project.status === 'closed'
-                ? 'The project is closed, so nothing more is sold.'
-                : 'Sold out. If a buyer cancels, move the project back to Register Open to sell the share again.'}
-            </p>
-          )}
-          {moves.map((to) => {
-            const reasons = [
-              ...(to === 'open' ? checks.blockers : []),
-              ...(readiness ? salesMoveBlockers(to, readiness, shape) : []),
-            ];
-            const blocked = reasons.length > 0;
-            return (
-              <div key={to}>
-                <Button
-                  size="sm"
-                  className="w-full"
-                  variant={to === 'open' ? 'primary' : 'outline'}
-                  disabled={blocked || readiness === undefined}
-                  onClick={() => setTarget(to)}
-                >
-                  {blocked ? <Lock className="size-4" /> : <ShoppingBag className="size-4" />}
-                  {SALES_MOVE_LABEL[to]}
-                </Button>
-                {blocked && (
-                  <ul className="mt-1.5 space-y-1 text-xs text-amber-700">
-                    {reasons.map((b) => (
-                      <li key={b}>• {b}</li>
-                    ))}
-                  </ul>
-                )}
-              </div>
-            );
-          })}
+          {moves.map((to) => (
+            <Button
+              key={to}
+              size="sm"
+              className="w-full"
+              variant={to === 'open' ? 'primary' : 'outline'}
+              onClick={() => setTarget(to)}
+            >
+              <ShoppingBag className="size-4" />
+              {SALES_MOVE_LABEL[to]}
+            </Button>
+          ))}
         </div>
         {/*
           Publishing sits with selling (client walkthrough 2026-10-10): the
-          public site shows projects buyers can book, so the switch only works
-          once sales have opened.
+          public site shows projects an investor can buy into, so the switch
+          only works once sales have opened.
         */}
         <div className="mt-4 space-y-2 border-t border-hairline pt-4">
           <Checkbox
@@ -193,8 +114,9 @@ export function ProjectSalesCard({ project, lands }: { project: Project; lands: 
             <p className="text-xs text-ink-muted">Open sales first, then publish.</p>
           )}
         </div>
-        {website && website.length > 0 && <WebsiteChecklist items={website} published={project.is_public} />}
-        {!isShare && <LateFeeDefault key={project.updated_at} project={project} />}
+        {website && website.length > 0 && (
+          <WebsiteChecklist items={website} published={project.is_public} />
+        )}
       </Card>
 
       <ConfirmDialog
@@ -202,15 +124,9 @@ export function ProjectSalesCard({ project, lands }: { project: Project; lands: 
         title={target ? SALES_MOVE_LABEL[target] : ''}
         subtitle={`${project.code} · ${project.name}`}
         icon={ShoppingBag}
-        tone={
-          (opening && checks.warnings.length > 0) || (target === 'sold_out' && unsold > 0)
-            ? 'warning'
-            : 'default'
-        }
         confirmLabel={target ? SALES_MOVE_LABEL[target] : 'Confirm'}
         message={target ? MOVE_QUESTION[target] : undefined}
         busy={busy}
-        disabled={opening && checks.blockers.length > 0}
         onCancel={() => {
           setTarget(null);
           setError('');
@@ -218,32 +134,6 @@ export function ProjectSalesCard({ project, lands }: { project: Project; lands: 
         onConfirm={confirm}
       >
         {error && <p className="text-sm text-red-600">{error}</p>}
-        {target === 'sold_out' && unsold > 0 && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800">
-            <p className="flex items-center gap-1.5 text-sm font-medium">
-              <AlertTriangle className="size-4" /> {unsold} {itemPlural} are still unsold
-            </p>
-            <p className="mt-1">
-              They will drop out of the booking form. Use Pause sales instead if the stock is only held back
-              for now.
-            </p>
-          </div>
-        )}
-        {opening && checks.warnings.length > 0 && (
-          <div className="rounded-xl border border-amber-200 bg-amber-50 p-3">
-            <p className="flex items-center gap-1.5 text-sm font-medium text-amber-800">
-              <AlertTriangle className="size-4" /> Before you open sales
-            </p>
-            <ul className="mt-1 space-y-1 text-xs text-amber-700">
-              {checks.warnings.map((w) => (
-                <li key={w}>• {w}</li>
-              ))}
-            </ul>
-            <p className="mt-2 text-xs text-amber-700">
-              You can still open sales. Company Settings can turn these into hard stops.
-            </p>
-          </div>
-        )}
       </ConfirmDialog>
     </>
   );
@@ -253,13 +143,13 @@ const WEBSITE_CHECK_LABEL: Record<WebsiteReadinessItem['key'], string> = {
   cover: 'Cover image',
   location: 'Location summary',
   gallery: 'At least one gallery image marked "Show on website"',
-  priced_unit: 'At least one available unit with a price',
+  priced_unit: 'An open share offering with a price',
   brochure: 'Brochure on the website (optional)',
 };
 
 /**
  * "Ready for the website" (Public Portal v2.0 §6.3). Warnings only: a project
- * can be published with gaps, the list just says what buyers will miss.
+ * can be published with gaps, the list just says what visitors will miss.
  */
 function WebsiteChecklist({ items, published }: { items: WebsiteReadinessItem[]; published: boolean }) {
   const missing = items.filter((i) => !i.ok && !i.optional).length;
@@ -277,56 +167,14 @@ function WebsiteChecklist({ items, published }: { items: WebsiteReadinessItem[];
             {i.ok ? (
               <CheckCircle2 className="mt-px size-3.5 shrink-0 text-emerald-600" />
             ) : (
-              <Circle className={`mt-px size-3.5 shrink-0 ${i.optional ? 'text-slate-400' : 'text-amber-600'}`} />
+              <Circle
+                className={`mt-px size-3.5 shrink-0 ${i.optional ? 'text-slate-400' : 'text-amber-600'}`}
+              />
             )}
             <span className={i.ok ? 'text-ink-muted' : 'text-ink'}>{WEBSITE_CHECK_LABEL[i.key]}</span>
           </li>
         ))}
       </ul>
-    </div>
-  );
-}
-
-/**
- * BUYER-PORTAL-PLAN.md §10 F7 — the late fee a new sale agreement on this
- * project starts from. Each agreement can still change it; agreements
- * already signed keep their own.
- */
-function LateFeeDefault({ project }: { project: Project }) {
-  const [pct, setPct] = useState(project.default_late_fee_pct ? String(project.default_late_fee_pct) : '');
-  const [grace, setGrace] = useState(project.default_late_fee_pct ? String(project.default_late_fee_grace_days ?? 0) : '');
-  const [error, setError] = useState('');
-  const dirty =
-    pct !== (project.default_late_fee_pct ? String(project.default_late_fee_pct) : '') ||
-    grace !== (project.default_late_fee_pct ? String(project.default_late_fee_grace_days ?? 0) : '');
-
-  async function save() {
-    const p = pct.trim() ? Number(pct) : 0;
-    const g = grace.trim() ? Number(grace) : 0;
-    if (!(p >= 0 && p <= 100)) return setError('The late fee is a percentage from 0 to 100.');
-    if (!(Number.isInteger(g) && g >= 0)) return setError('Grace days are whole days, 0 or more.');
-    setError('');
-    await projectRepository.update(project.id, { default_late_fee_pct: p > 0 ? p : null, default_late_fee_grace_days: p > 0 ? g : null });
-  }
-
-  return (
-    <div className="mt-4 border-t border-hairline pt-4">
-      <p className="text-sm font-medium text-ink">Late fee on buyer installments</p>
-      <p className="mb-3 text-xs text-ink-muted">What a new sale agreement starts from — it can be changed on each agreement.</p>
-      <div className="grid grid-cols-2 gap-3">
-        <Field label="Late fee (%)">
-          <TextInput inputMode="decimal" value={pct} onChange={(e) => setPct(e.target.value.replace(/[^\d.]/g, ''))} placeholder="None" />
-        </Field>
-        <Field label="Grace days">
-          <TextInput inputMode="numeric" value={grace} onChange={(e) => setGrace(e.target.value.replace(/\D/g, ''))} placeholder="0" />
-        </Field>
-      </div>
-      {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-      {dirty && (
-        <Button size="sm" className="mt-3" onClick={save}>
-          Save late fee
-        </Button>
-      )}
     </div>
   );
 }

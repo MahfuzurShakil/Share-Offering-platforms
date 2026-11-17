@@ -31,16 +31,14 @@ import {
   LEAD_STATUS_META,
   followUpState,
 } from '@/lib/domain/lead';
-import { BOOKING_STATUS_META } from '@/lib/domain/booking';
-import { UNIT_STATUS_META, projectShape, unitSizeLabel } from '@/lib/domain/project';
+import { SALE_HEALTH_META } from '@/lib/domain/share-sale';
 import {
-  bookingRepository,
   customerRepository,
   leadRepository,
   userRepository,
 } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
-import { formatBdt, formatDate, formatPhone, todayLocal } from '@/lib/utils/format';
+import { formatDate, formatPhone, todayLocal } from '@/lib/utils/format';
 
 type Tab = 'overview' | 'activity' | 'documents';
 
@@ -69,7 +67,11 @@ export default function LeadDetailPage() {
     [lead?.phone],
   );
 
-  const bookings = useLiveQuery(() => bookingRepository.listForLead(id), [id]);
+  // a lead that bought shows its purchases: the customer made from it holds them
+  const shares = useLiveQuery(
+    async () => (customer ? customerRepository.listForCustomer(customer.id) : []),
+    [customer?.id],
+  );
   useEffect(() => {
     userRepository.salesTeam().then(setSalesTeam);
   }, []);
@@ -209,30 +211,6 @@ export default function LeadDetailPage() {
                   </p>
                 )}
 
-                {lead.unit && (
-                  <div className="mt-3 rounded-xl border border-hairline p-3">
-                    <div className="flex items-center justify-between gap-2">
-                      <p className="text-sm font-medium text-ink">
-                        {projectShape(lead.project?.project_type ?? 'apartment').labels.item}{' '}
-                        {lead.unit.code}
-                      </p>
-                      <Badge tone={UNIT_STATUS_META[lead.unit.status].tone}>
-                        {UNIT_STATUS_META[lead.unit.status].label}
-                      </Badge>
-                    </div>
-                    <p className="mt-1 text-xs text-ink-muted">
-                      {/* v27 — katha on a plot, a percentage on a share */}
-                      {lead.unit.unit_type} ·{' '}
-                      {unitSizeLabel(
-                        lead.unit,
-                        projectShape(lead.project?.project_type ?? 'apartment'),
-                      )}
-                      {lead.unit.facing && ` · ${lead.unit.facing} facing`} ·{' '}
-                      {formatBdt(lead.unit.base_price)}
-                    </p>
-                  </div>
-                )}
-
                 {lead.inquiry_message && (
                   <div className="mt-4 border-t border-hairline pt-4">
                     <p className="mb-1 text-sm font-medium text-ink">Inquiry message</p>
@@ -295,10 +273,10 @@ export default function LeadDetailPage() {
             )}
           </Card>
 
-          {/* the lead's bookings and the customer they made — no separate "convert" step */}
-          {((bookings ?? []).length > 0 || customer) && (
+          {/* the lead's purchases and the customer they made — no separate "convert" step */}
+          {((shares ?? []).length > 0 || customer) && (
             <Card>
-              <CardHeader title="Customer & bookings" />
+              <CardHeader title="Customer & purchases" />
               {customer && (
                 <Link
                   href={`/admin/customers/${customer.id}`}
@@ -314,24 +292,30 @@ export default function LeadDetailPage() {
                 </Link>
               )}
               <ul className="mt-3 space-y-1.5">
-                {(bookings ?? []).map((b) => (
-                  <li key={b.id}>
+                {(shares ?? []).map((s) => (
+                  <li key={s.id}>
                     <Link
-                      href={`/admin/bookings/${b.id}`}
+                      href={`/admin/share-sale/sales/${s.id}`}
                       className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50"
                     >
-                      <span className="text-admin-700">{b.code}</span>
-                      <Badge tone={BOOKING_STATUS_META[b.status].tone}>
-                        {BOOKING_STATUS_META[b.status].label}
+                      <span className="text-admin-700">{s.code}</span>
+                      <Badge
+                        tone={
+                          s.status === 'agreement_signed'
+                            ? 'teal'
+                            : SALE_HEALTH_META[s.status].tone
+                        }
+                      >
+                        {s.status === 'agreement_signed' ? 'Agreement signed' : SALE_HEALTH_META[s.status].label}
                       </Badge>
                     </Link>
                   </li>
                 ))}
               </ul>
               {lead.status === 'booked' && (
-                <Link href={`/admin/bookings/new?lead=${lead.id}`} className="mt-3 block">
+                <Link href={`/admin/share-sale?lead=${lead.id}`} className="mt-3 block">
                   <Button variant="outline" size="sm" className="w-full">
-                    <FileSignature className="size-4" /> Book another unit
+                    <FileSignature className="size-4" /> Sell more shares
                   </Button>
                 </Link>
               )}

@@ -2,7 +2,6 @@
 
 import { db } from '../db/database';
 import type {
-  Booking,
   CommissionLine,
   CommissionPayout,
   CommissionPlan,
@@ -16,14 +15,13 @@ import {
   buildLines,
   chainOn,
   nextPlainCode,
-  paidReachedOn,
   payoutMath,
   planForSale,
   planProblem,
   stageReachedOn,
   type SaleProgress,
 } from '../domain/commission';
-import { money } from '../domain/procurement';
+import { money } from '../domain/money';
 import { newId, nextCode, nowIso } from '../utils/id';
 import { todayLocal } from '../utils/format';
 import { BaseRepository, type NewRecord } from './base.repository';
@@ -138,17 +136,18 @@ interface SaleFacts {
   progress: SaleProgress;
 }
 
+/**
+ * Every sale the commission engine can earn on.
+ *
+ * PHASE 1 sells shares only. The plan keeps its `applies_to` field and the
+ * line keeps `sale_kind`, so the flat/plot booking arm slots back in with the
+ * sales module in Phase 2 without touching the plans or the earned lines.
+ */
 async function allSaleFacts(): Promise<SaleFacts[]> {
-  const [shares, sharePays, bookings, payments, deliveries, units, towers] = await Promise.all([
+  const [shares, sharePays] = await Promise.all([
     db.share_sales.toArray(),
     db.share_payments.toArray(),
-    db.bookings.toArray(),
-    db.payments.toArray(),
-    db.unit_deliveries.toArray(),
-    db.units.toArray(),
-    db.towers.toArray(),
   ]);
-  const projectOfUnit = new Map(units.map((u) => [u.id, towers.find((t) => t.id === u.tower_id)?.project_id ?? null]));
   const out: SaleFacts[] = [];
   for (const s of shares) {
     const pays = sharePays.filter((p) => p.sale_id === s.id).map((p) => ({ date: p.paid_on, amount: Number(p.principal) || 0 }));
@@ -171,34 +170,6 @@ async function allSaleFacts(): Promise<SaleFacts[]> {
       },
     });
   }
-  for (const b of bookings) {
-    const pays = payments
-      .filter((p) => p.booking_id === b.id)
-      .map((p) => ({ date: p.payment_date, amount: p.principal ?? money((Number(p.amount) || 0) - (Number(p.late_fee) || 0)) }));
-    const handed = deliveries
-      .filter((d) => d.booking_id === b.id && (d.step === 'keys_handed_over' || d.step === 'possession_given'))
-      .map((d) => d.event_date)
-      .sort()[0];
-    const confirmedOn = b.status === 'confirmed' ? (paidReachedOn(pays, b.booking_amount) ?? b.booking_date) : null;
-    out.push({
-      kind: 'booking',
-      id: b.id,
-      project_id: projectOfUnit.get(b.unit_id) ?? null,
-      offering_id: null,
-      date: b.booking_date,
-      amount: b.final_price,
-      units: 1,
-      sold_by: b.sold_by_member_id ?? null,
-      ended: b.status === 'cancelled',
-      progress: {
-        price: b.final_price,
-        agreement_on: b.agreement_date ?? confirmedOn,
-        down_payment: b.booking_amount,
-        payments: pays,
-        handover_on: handed ?? null,
-      },
-    });
-  }
   return out;
 }
 
@@ -218,7 +189,7 @@ export function syncCommissions(): Promise<void> {
 }
 
 async function runSync(): Promise<void> {
-  const tables = [db.commission_lines, db.commission_plans, db.org_members, db.org_moves, db.lookup_values, db.share_sales, db.share_payments, db.bookings, db.payments, db.unit_deliveries, db.units, db.towers];
+  const tables = [db.commission_lines, db.commission_plans, db.org_members, db.org_moves, db.lookup_values, db.share_sales, db.share_payments];
   await db.transaction('rw', tables, async () => {
     const [facts, plans, members, moves, designations, lines] = await Promise.all([
       allSaleFacts(),
@@ -308,22 +279,20 @@ export interface CommissionLineRow extends CommissionLine {
 }
 
 async function withRelations(lines: CommissionLine[]): Promise<CommissionLineRow[]> {
-  const [members, projects, shares, bookings, customers, plans] = await Promise.all([
+  const [members, projects, shares, customers, plans] = await Promise.all([
     db.org_members.toArray(),
     db.projects.toArray(),
     db.share_sales.toArray(),
-    db.bookings.toArray(),
     db.customers.toArray(),
     db.commission_plans.toArray(),
   ]);
   const member = new Map(members.map((m) => [m.id, m]));
   const project = new Map(projects.map((p) => [p.id, p]));
   const share = new Map<string, ShareSale>(shares.map((s) => [s.id, s]));
-  const booking = new Map<string, Booking>(bookings.map((b) => [b.id, b]));
   const customer = new Map(customers.map((c) => [c.id, c]));
   const plan = new Map(plans.map((p) => [p.id, p.code]));
   return lines.map((l) => {
-    const sale = l.share_sale_id ? share.get(l.share_sale_id) : l.booking_id ? booking.get(l.booking_id) : undefined;
+    const sale = l.share_sale_id ? share.get(l.share_sale_id) : undefined;
     return {
       ...l,
       member: member.get(l.member_id) ?? null,

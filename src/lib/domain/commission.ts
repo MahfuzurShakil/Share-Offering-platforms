@@ -10,7 +10,7 @@ import type {
   OrgMember,
   OrgMove,
 } from '../db/types';
-import { money } from './procurement';
+import { money } from './money';
 
 /*
  * Sales organisation and staged commission (REVENUE-SHARE-PLAN.md §6–7).
