@@ -2,15 +2,16 @@
   "version": "0.0.1",
   "configurations": [
     {
+      "//": "The BUILT app. Next 16 allows one `next dev` per machine, and the prototype in ../RealEstateSolution3 usually holds it, so the default here serves `next build` output instead. Run `npm run build` first. For hot reload, stop the prototype's dev server and use the `dev` entry below.",
+      "name": "start",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "start", "--", "-p", "3001"],
+      "port": 3001
+    },
+    {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev",
-        "--",
-        "-p",
-        "3001"
-      ],
+      "runtimeArgs": ["run", "dev", "--", "-p", "3001"],
       "port": 3001
     }
   ]

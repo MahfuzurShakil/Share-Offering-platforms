@@ -22,10 +22,8 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination, usePagination } from '@/components/ui/Pagination';
 import { ResultCard } from '@/components/ui/ResultCard';
 import { ResultsLayout, ViewToggle, type ViewMode } from '@/components/ui/ViewToggle';
-import { PROJECT_STATUSES, PROJECT_TYPES, type ProjectStatus, type ProjectType } from '@/lib/db/types';
 import {
   PROJECT_SALES_STATUS_META,
-  PROJECT_SHAPE,
   PROJECT_STATUS_META,
   PROJECT_TYPE_LABEL,
   projectSalesStatus,
@@ -41,8 +39,6 @@ type SortKey = 'newest' | 'oldest' | 'completion_soon' | 'name';
 /** Project list — Design Reference A.7 (filter sidebar + result cards). */
 export default function ProjectsListPage() {
   const [search, setSearch] = useState('');
-  const [status, setStatus] = useState<ProjectStatus | 'all'>('all');
-  const [projectType, setProjectType] = useState<ProjectType | 'all'>('all');
   const [publicOnly, setPublicOnly] = useState(false);
   // QA audit P-09 — sales status is a key project fact, so it can be filtered
   const [sales, setSales] = useState<ProjectSalesStatus | 'all'>('all');
@@ -53,11 +49,9 @@ export default function ProjectsListPage() {
     () =>
       projectRepository.list({
         search,
-        status,
-        project_type: projectType,
         ...(publicOnly ? { is_public: true } : {}),
       }),
-    [search, status, projectType, publicOnly],
+    [search, publicOnly],
   );
 
   const allProjects = useLiveQuery(() => projectRepository.getAll(), []);
@@ -100,13 +94,11 @@ export default function ProjectsListPage() {
   const loading = projects === undefined;
   const hasAny = (allProjects?.length ?? 0) > 0;
   const filtersActive =
-    Boolean(search) || status !== 'all' || projectType !== 'all' || publicOnly || sales !== 'all';
+    Boolean(search) || publicOnly || sales !== 'all';
 
   function resetFilters() {
     setSearch('');
-    setStatus('all');
     setSales('all');
-    setProjectType('all');
     setPublicOnly(false);
   }
 
@@ -141,29 +133,6 @@ export default function ProjectsListPage() {
                 </div>
               </Field>
 
-              <Field label="Status">
-                <SelectInput
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value as ProjectStatus | 'all')}
-                >
-                  <option value="all">All statuses</option>
-                  {/* QA audit P-09 — the names a card actually shows for that stage */}
-                  {PROJECT_STATUSES.map((s) => {
-                    const alt = [...new Set(
-                      [PROJECT_SHAPE.plot_development, PROJECT_SHAPE.land_share]
-                        .map((shape) => projectStatusLabel(s, shape))
-                        .filter((l) => l !== PROJECT_STATUS_META[s].label),
-                    )];
-                    return (
-                      <option key={s} value={s}>
-                        {PROJECT_STATUS_META[s].label}
-                        {alt.length ? ` / ${alt.join(' / ')}` : ''}
-                      </option>
-                    );
-                  })}
-                </SelectInput>
-              </Field>
-
               <Field label="Sales">
                 <SelectInput
                   value={sales}
@@ -173,20 +142,6 @@ export default function ProjectsListPage() {
                   {PROJECT_SALES_STATUSES.map((s) => (
                     <option key={s} value={s}>
                       {PROJECT_SALES_STATUS_META[s].label}
-                    </option>
-                  ))}
-                </SelectInput>
-              </Field>
-
-              <Field label="Project Type">
-                <SelectInput
-                  value={projectType}
-                  onChange={(e) => setProjectType(e.target.value as ProjectType | 'all')}
-                >
-                  <option value="all">All types</option>
-                  {PROJECT_TYPES.map((t) => (
-                    <option key={t} value={t}>
-                      {PROJECT_TYPE_LABEL[t]}
                     </option>
                   ))}
                 </SelectInput>
