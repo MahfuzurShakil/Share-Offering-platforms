@@ -1,0 +1,445 @@
+// Share-Sale & Investor Management Platform — database schema.
+//
+// Written module by module in stage order (PHASE-1-PLAN.md §Stages). This file
+// holds S1: the foundation every other module stands on — reference data,
+// people and how they sign in, what they may do, the audit trail, display-code
+// numbering, documents, and projects.
+//
+// Conventions, so the rest of the schema reads the same way:
+//   * model PascalCase, table snake_case via @@map; columns stay snake_case
+//   * id  String @id @default(uuid(7)) @db.Uuid
+//   * created_at / updated_at / created_by on every entity
+//   * money Decimal(18,2), share percentages Decimal(9,6) — never Float
+//   * dates that are days (a due date, a signing date) are @db.Date;
+//     moments in time are @db.Timestamptz
+//   * `deleted_at` is the soft-delete marker on records people manage.
+//     Financial rows never carry one: they are immutable and corrected by a
+//     reversing entry (AGENTS.md).
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+/* ------------------------------------------------------------------ *
+ * Reference data and company settings
+ * ------------------------------------------------------------------ */
+
+/// Every option list the client edits themselves: amenities, income and
+/// expense heads, designations, document types. Statuses are NOT here — they
+/// are ENUMs in code, because the software branches on them.
+model LookupValue {
+  id         String    @id @default(uuid(7)) @db.Uuid
+  category   String    @db.VarChar(64)
+  /// for category='document_type' this is the entity_type it belongs to
+  scope      String?   @db.VarChar(64)
+  value      String    @db.VarChar(200)
+  /// the stable machine key a record stores, where a label would be unsafe to rename
+  code       String?   @db.VarChar(64)
+  is_active  Boolean   @default(true)
+  sort_order Int       @default(0)
+  /// a seeded row the client may rename but not delete
+  is_system  Boolean   @default(false)
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  @@unique([category, scope, value])
+  @@index([category, is_active, sort_order])
+  @@map("lookup_values")
+}
+
+/// One row. The company's own details, as they appear on documents and the
+/// public site.
+model CompanySettings {
+  id                      String   @id @default(uuid(7)) @db.Uuid
+  company_name            String   @db.VarChar(200)
+  legal_name              String?  @db.VarChar(200)
+  tagline                 String?  @db.VarChar(300)
+  about                   String?
+  phone                   String?  @db.VarChar(40)
+  alt_phone               String?  @db.VarChar(40)
+  email                   String?  @db.VarChar(200)
+  website                 String?  @db.VarChar(200)
+  address                 String?
+  tax_id                  String?  @db.VarChar(60)
+  trade_licence_no        String?  @db.VarChar(60)
+  rehab_member_no         String?  @db.VarChar(60)
+  established_year        Int?
+  /// letterhead and logo for generated documents
+  logo_document_id        String?  @db.Uuid
+  letterhead_document_id  String?  @db.Uuid
+  facebook_url            String?  @db.VarChar(300)
+  youtube_url             String?  @db.VarChar(300)
+  instagram_url           String?  @db.VarChar(300)
+  linkedin_url            String?  @db.VarChar(300)
+  /// public website switches
+  public_show_prices      Boolean  @default(true)
+  public_show_share_sale  Boolean  @default(false)
+  default_currency        String   @default("BDT") @db.VarChar(8)
+  notes                   String?
+  created_at              DateTime @default(now()) @db.Timestamptz
+  updated_at              DateTime @updatedAt @db.Timestamptz
+  created_by              String?  @db.Uuid
+
+  @@map("company_settings")
+}
+
+/* ------------------------------------------------------------------ *
+ * People, access and sessions
+ * ------------------------------------------------------------------ */
+
+enum UserStatus {
+  active
+  suspended
+}
+
+/// A role the client defines. The codes of the roles seeded at install match
+/// the role names the UI has always used, so `domain/access.ts` keeps working;
+/// after that the client adds, renames and re-permissions roles themselves.
+model Role {
+  id          String   @id @default(uuid(7)) @db.Uuid
+  code        String   @unique @db.VarChar(64)
+  name        String   @db.VarChar(100)
+  description String?
+  /// a seeded role: its permissions may change, the code may not
+  is_system   Boolean  @default(false)
+  sort_order  Int      @default(0)
+  created_at  DateTime @default(now()) @db.Timestamptz
+  updated_at  DateTime @updatedAt @db.Timestamptz
+  created_by  String?  @db.Uuid
+
+  permissions RolePermission[]
+  users       User[]
+
+  @@map("roles")
+}
+
+/// What a role may do in one module. `level` is the permission vocabulary the
+/// UI already speaks: none | view | own | edit | full.
+model RolePermission {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  role_id    String   @db.Uuid
+  module     String   @db.VarChar(64)
+  level      String   @db.VarChar(16)
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  role Role @relation(fields: [role_id], references: [id], onDelete: Cascade)
+
+  @@unique([role_id, module])
+  @@map("role_permissions")
+}
+
+/// Staff who sign in to the Admin Portal.
+model User {
+  id            String     @id @default(uuid(7)) @db.Uuid
+  name          String     @db.VarChar(200)
+  phone         String     @unique @db.VarChar(20)
+  email         String?    @unique @db.VarChar(200)
+  /// argon2id. Null until the person sets one from their invitation.
+  password_hash String?
+  must_change_password Boolean @default(false)
+  role_code     String     @db.VarChar(64)
+  status        UserStatus @default(active)
+  last_login_at DateTime?  @db.Timestamptz
+  created_at    DateTime   @default(now()) @db.Timestamptz
+  updated_at    DateTime   @updatedAt @db.Timestamptz
+  created_by    String?    @db.Uuid
+  deleted_at    DateTime?  @db.Timestamptz
+
+  role        Role                    @relation(fields: [role_code], references: [code])
+  projects    UserProjectAssignment[]
+  sessions    Session[]
+  managed     Project[]               @relation("project_manager")
+
+  @@index([status])
+  @@map("users")
+}
+
+/// Which projects a user is scoped to. No rows = every project.
+model UserProjectAssignment {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  user_id    String   @db.Uuid
+  project_id String   @db.Uuid
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  user    User    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+  project Project @relation(fields: [project_id], references: [id], onDelete: Cascade)
+
+  @@unique([user_id, project_id])
+  @@map("user_project_assignments")
+}
+
+enum SessionKind {
+  /// a staff member in the Admin Portal
+  staff
+  /// an investor in the Customer Portal or a mobile app
+  customer
+}
+
+/// One signed-in device. The token is opaque and only its hash is stored, so a
+/// leaked database row cannot be replayed as a session; revocation is a single
+/// UPDATE, which is why this is not a JWT.
+model Session {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  kind        SessionKind
+  user_id     String?     @db.Uuid
+  customer_id String?     @db.Uuid
+  token_hash  String      @unique
+  /// what the person is signing in from, for "sign out my lost phone"
+  device      String?     @db.VarChar(200)
+  ip          String?     @db.VarChar(64)
+  expires_at  DateTime    @db.Timestamptz
+  revoked_at  DateTime?   @db.Timestamptz
+  last_seen_at DateTime?  @db.Timestamptz
+  created_at  DateTime    @default(now()) @db.Timestamptz
+  updated_at  DateTime    @updatedAt @db.Timestamptz
+  created_by  String?     @db.Uuid
+
+  user User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([user_id])
+  @@index([customer_id])
+  @@index([expires_at])
+  @@map("sessions")
+}
+
+/// A one-time code sent to a mobile number. Hashed, short-lived, attempt-capped.
+model OtpCode {
+  id           String    @id @default(uuid(7)) @db.Uuid
+  phone        String    @db.VarChar(20)
+  code_hash    String
+  /// what signing in with this code is for
+  purpose      String    @db.VarChar(32)
+  expires_at   DateTime  @db.Timestamptz
+  attempts     Int       @default(0)
+  consumed_at  DateTime? @db.Timestamptz
+  ip           String?   @db.VarChar(64)
+  created_at   DateTime  @default(now()) @db.Timestamptz
+  updated_at   DateTime  @updatedAt @db.Timestamptz
+  created_by   String?   @db.Uuid
+
+  @@index([phone, created_at])
+  @@index([expires_at])
+  @@map("otp_codes")
+}
+
+/// Every sign-in and OTP attempt, for the rate limiter and for the record of
+/// who tried to get in. Postgres-backed on purpose: one fewer service to run.
+model AuthAttempt {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  /// 'login' | 'otp_request' | 'otp_verify'
+  kind       String   @db.VarChar(32)
+  /// phone, email or whatever was typed — never the password
+  identifier String?  @db.VarChar(200)
+  ip         String?  @db.VarChar(64)
+  ok         Boolean
+  reason     String?  @db.VarChar(120)
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  @@index([kind, identifier, created_at])
+  @@index([kind, ip, created_at])
+  @@map("auth_attempts")
+}
+
+/* ------------------------------------------------------------------ *
+ * Audit trail and display-code numbering
+ * ------------------------------------------------------------------ */
+
+enum AuditAction {
+  create
+  update
+  delete
+  login
+  logout
+  login_failed
+  permission_change
+  export
+}
+
+/// Append-only. Written by a Prisma extension inside the same transaction as
+/// the change itself, so no service can forget it. The application's database
+/// role has INSERT and SELECT here and nothing else.
+model AuditLog {
+  id          String      @id @default(uuid(7)) @db.Uuid
+  at          DateTime    @default(now()) @db.Timestamptz
+  action      AuditAction
+  /// who did it: a staff user, a customer, or neither for a system job
+  actor_user_id     String? @db.Uuid
+  actor_customer_id String? @db.Uuid
+  actor_role        String? @db.VarChar(64)
+  table_name  String      @db.VarChar(64)
+  record_id   String?     @db.Uuid
+  /// the record's display code, so a deleted row is still recognisable
+  record_code String?     @db.VarChar(40)
+  before      Json?
+  after       Json?
+  ip          String?     @db.VarChar(64)
+  user_agent  String?     @db.VarChar(300)
+  request_id  String?     @db.VarChar(64)
+
+  @@index([table_name, record_id])
+  @@index([actor_user_id, at])
+  @@index([at])
+  @@map("audit_log")
+}
+
+/// The next number in a display-code series (PRJ-2026-001, SHR-2026-014).
+///
+/// A code is allocated by `UPDATE ... SET next_no = next_no + 1 RETURNING`
+/// inside the transaction that writes the record, so two people saving at once
+/// cannot take the same number. Gaps only appear when a transaction rolls
+/// back; a nightly job reports them rather than filling them in.
+model CodeSeries {
+  id         String   @id @default(uuid(7)) @db.Uuid
+  /// what is being numbered, e.g. 'project', 'share_sale'
+  module     String   @db.VarChar(64)
+  prefix     String   @db.VarChar(16)
+  /// the year (or other period) the series restarts on, e.g. '2026'
+  period     String   @db.VarChar(16)
+  next_no    Int      @default(1)
+  /// how many digits the number is padded to
+  width      Int      @default(3)
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+
+  @@unique([module, period])
+  @@map("code_series")
+}
+
+/* ------------------------------------------------------------------ *
+ * Documents
+ * ------------------------------------------------------------------ */
+
+/// A file against any record. The bytes live in object storage (S3/R2 in
+/// production, a local folder in development) behind `server/storage`; this row
+/// holds where they are and what they are.
+model Document {
+  id               String    @id @default(uuid(7)) @db.Uuid
+  entity_type      String    @db.VarChar(40)
+  entity_id        String    @db.Uuid
+  document_type    String    @db.VarChar(64)
+  custom_type_name String?   @db.VarChar(120)
+  /// the storage key, not a public URL — files are served through the API
+  storage_key      String?   @db.VarChar(400)
+  /// for a document that lives somewhere else entirely
+  external_url     String?   @db.VarChar(400)
+  file_name        String?   @db.VarChar(260)
+  file_size        Int?
+  mime_type        String?   @db.VarChar(120)
+  /// generated papers (agreement, receipt) carry their own number
+  document_no      String?   @db.VarChar(40)
+  /// true only for files the public website or the investor portal may serve
+  is_public        Boolean   @default(false)
+  notes            String?
+  uploaded_by      String?   @db.Uuid
+  uploaded_at      DateTime  @default(now()) @db.Timestamptz
+  created_at       DateTime  @default(now()) @db.Timestamptz
+  updated_at       DateTime  @updatedAt @db.Timestamptz
+  created_by       String?   @db.Uuid
+  deleted_at       DateTime? @db.Timestamptz
+
+  @@index([entity_type, entity_id])
+  @@index([document_type])
+  @@map("documents")
+}
+
+/* ------------------------------------------------------------------ *
+ * Projects
+ * ------------------------------------------------------------------ */
+
+enum ProjectType {
+  land_share
+  plot_development
+  apartment
+  commercial
+  mixed
+}
+
+/// Kept as the prototype wrote it so inherited records and labels still line
+/// up, even though Phase 1 switches the status *flow* off: a project stays on
+/// `planning` unless somebody moves it deliberately.
+enum ProjectStatus {
+  planning
+  design
+  approval
+  under_construction
+  nearly_complete
+  handover_ongoing
+  closed
+}
+
+enum ProjectSalesStatus {
+  not_open
+  open
+  paused
+  sold_out
+}
+
+enum LandSizeUnit {
+  katha
+  bigha
+  decimal
+}
+
+/// What happens to the land after its shares are sold.
+enum ConstructionAfterSale {
+  undecided
+  planned
+  none
+}
+
+/// The project is the thing shares are sold in: a master record, the money it
+/// earns, and its papers. Land, towers, units and the JV allocation belong to
+/// the modules this product does not carry (AGENTS.md).
+model Project {
+  id                     String                 @id @default(uuid(7)) @db.Uuid
+  code                   String                 @unique @db.VarChar(40)
+  name                   String                 @db.VarChar(200)
+  project_type           ProjectType            @default(land_share)
+  status                 ProjectStatus          @default(planning)
+  sales_status           ProjectSalesStatus     @default(not_open)
+  /// a fact typed on the project in Phase 1; a link to the Land module in Phase 2
+  total_land_area        Decimal?               @db.Decimal(14, 2)
+  total_land_area_unit   LandSizeUnit?
+  /// the marketing address the public site shows, not a cadastral one
+  location_summary       String?                @db.VarChar(300)
+  expected_start_date    DateTime?              @db.Date
+  expected_completion_date DateTime?            @db.Date
+  project_manager_id     String?                @db.Uuid
+  architect              String?                @db.VarChar(200)
+  surroundings           String?
+  /// multi-select from lookup_values (category='amenity')
+  amenities              String[]               @default([])
+  /// an externally hosted display picture; an uploaded one is a Document
+  cover_image_url        String?                @db.VarChar(400)
+  cover_image_document_id String?               @db.Uuid
+  construction_after_sale ConstructionAfterSale @default(undecided)
+  /// the late fee a new share agreement on this project starts from
+  default_late_fee_pct   Decimal?               @db.Decimal(6, 3)
+  default_late_fee_grace_days Int?
+  is_public              Boolean                @default(false)
+  is_featured            Boolean                @default(false)
+  created_at             DateTime               @default(now()) @db.Timestamptz
+  updated_at             DateTime               @updatedAt @db.Timestamptz
+  created_by             String?                @db.Uuid
+  deleted_at             DateTime?              @db.Timestamptz
+
+  manager     User?                   @relation("project_manager", fields: [project_manager_id], references: [id])
+  assignments UserProjectAssignment[]
+
+  @@index([status])
+  @@index([sales_status])
+  @@index([is_public, is_featured])
+  @@index([created_at])
+  @@map("projects")
+}

@@ -1,7 +1,12 @@
 /*
- * Vitest runs in Node: fake-indexeddb stands in for the browser's IndexedDB,
- * and `window` is defined so `getDb()` (browser-only by design) opens it.
+ * Test setup.
+ *
+ * `.env` is loaded so the database tests can find DATABASE_URL_TEST, and the
+ * interim Dexie layer still needs a browser shim: vitest runs in Node, so
+ * fake-indexeddb stands in for IndexedDB and `window` is defined for the
+ * browser-only `getDb()`. Both of those go when the Dexie layer does.
  */
+import 'dotenv/config';
 import 'fake-indexeddb/auto';
 
 if (typeof window === 'undefined') {
