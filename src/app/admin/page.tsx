@@ -20,8 +20,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { CashFlowChart, Ring, type MonthFlow } from '@/components/admin/dashboard/charts';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canView } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { SALE_HEALTH_META } from '@/lib/domain/share-sale';
 import {
   bankAccountRepository,
@@ -103,8 +102,8 @@ function recentMonths(today: string): string[] {
  * director open the same screen and get their own picture.
  */
 export default function AdminDashboardPage() {
-  const { role, userName } = useMockSession();
-  const see = (module: Parameters<typeof canView>[1]) => canView(role, module);
+  const { can, userName } = useSession();
+  const see = can;
   const seesMoney = see('dashboard') || see('finance_collection') || see('finance_expense');
   const today = todayLocal();
   const thisMonth = today.slice(0, 7);

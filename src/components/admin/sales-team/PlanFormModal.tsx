@@ -7,7 +7,7 @@ import { ErrorNote, useAction } from '@/components/admin/share-sale/ShareSaleMod
 import { Button } from '@/components/ui/Button';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import {
   COMMISSION_BASES,
   COMMISSION_PLAN_STATUSES,
@@ -49,7 +49,7 @@ const valueHint = (b: CommissionBasis) => (b === 'pct' ? '%' : b === 'per_share'
 
 /** Create or edit a commission plan: who earns what, and the stages that release it. */
 export function PlanFormModal({ plan, used, onClose }: { plan?: CommissionPlan; used?: number; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const projects = useLiveQuery(() => projectRepository.getAll(), []);
   const offerings = useLiveQuery(() => shareOfferingRepository.getAll(), []);
   const designations = useLiveQuery(() => orgMemberRepository.designations(), []);

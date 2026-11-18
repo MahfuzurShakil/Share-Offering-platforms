@@ -10,7 +10,7 @@ import { Checkbox, Field, SelectInput, TextArea, TextInput } from '@/components/
 import { Modal } from '@/components/ui/Modal';
 import { DocRow, FileDropZone, FileViewer, type ViewerFile } from './DocumentParts';
 import { WEBSITE_ENTITIES, WebsiteToggle } from './WebsiteToggle';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { DocumentRecord, EntityType } from '@/lib/db/types';
 import { documentRepository, lookupRepository } from '@/lib/repositories';
 import { rejectUpload, formatFileSize } from '@/lib/domain/file-upload';
@@ -68,7 +68,7 @@ export function DocumentsPanel({
   entityType: EntityType;
   entityId: string;
 }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [uploadOpen, setUploadOpen] = useState(false);
   const [viewing, setViewing] = useState<DocumentRecord | null>(null);
   const [deleteId, setDeleteId] = useState<string | null>(null);

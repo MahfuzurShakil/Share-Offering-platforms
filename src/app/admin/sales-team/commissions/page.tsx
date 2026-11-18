@@ -15,7 +15,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterBar, FilterSelect } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useReadOnly } from '@/components/ui/ViewOnly';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { COMMISSION_LINE_STATUSES } from '@/lib/db/types';
 import { COMMISSION_LINE_STATUS_META, SALE_KIND_LABEL } from '@/lib/domain/commission';
 import { commissionLineRepository, commissionTotals, type CommissionLineRow } from '@/lib/repositories';
@@ -31,7 +31,7 @@ const saleHref = (r: CommissionLineRow) => (r.share_sale_id ? `/admin/share-sale
 function CommissionsPage() {
   const params = useSearchParams();
   const synced = useCommissionSync();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const readOnly = useReadOnly();
   const rows = useLiveQuery(() => commissionLineRepository.rows(), [synced]);
   const [q, setQ] = useState('');

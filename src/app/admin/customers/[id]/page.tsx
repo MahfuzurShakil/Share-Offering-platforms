@@ -25,8 +25,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { LEAD_STATUS_META } from '@/lib/domain/lead';
 import { SALE_HEALTH_META, formatSharePct } from '@/lib/domain/share-sale';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import {
   customerPortfolioRepository,
   customerRepository,
@@ -82,7 +81,7 @@ export default function CustomerDetailPage() {
   const customer = useLiveQuery(() => customerRepository.getWithRelations(id), [id]);
   const holdings = useLiveQuery(() => customerPortfolioRepository.forCustomer(id), [id]);
   const shareFile = useLiveQuery(() => customerShareFile(id), [id]);
-  const { role } = useMockSession();
+  const { can } = useSession();
 
   if (customer === undefined || holdings === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
   if (!customer || !holdings) {
@@ -336,7 +335,7 @@ export default function CustomerDetailPage() {
                   uploads={shareFile.uploads}
                   sales={shareFile.sales}
                   bookings={[]}
-                  mayEdit={canEdit(role, 'share_sale')}
+                  mayEdit={can('share_sale', 'edit')}
                 />
               )}
               <section className="mt-6 border-t border-hairline pt-5">

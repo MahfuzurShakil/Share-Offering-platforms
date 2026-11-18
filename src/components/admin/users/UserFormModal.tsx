@@ -7,7 +7,7 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Checkbox, Field, SelectInput, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import {
   USER_ROLES,
   USER_STATUSES,
@@ -55,7 +55,7 @@ function UserDialog({
   onClose: () => void;
   onSaved: (user: User) => void;
 }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [form, setForm] = useState({
     name: user?.name ?? '',
     phone: user?.phone ?? '',

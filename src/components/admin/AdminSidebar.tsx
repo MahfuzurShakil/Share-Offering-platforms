@@ -4,8 +4,7 @@ import Link from 'next/link';
 import { usePathname } from 'next/navigation';
 import { useCallback, useSyncExternalStore } from 'react';
 import { ChevronRight, X } from 'lucide-react';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canView } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { cn } from '@/lib/utils/cn';
 import { NAV_GROUPS, type NavItem } from './nav-config';
 
@@ -106,7 +105,7 @@ export function AdminSidebar({
   onClose: () => void;
 }) {
   const pathname = usePathname();
-  const { role } = useMockSession();
+  const { can } = useSession();
 
   /*
    * Section 9.6 applied to the menu: a role only sees the modules it can open.
@@ -118,9 +117,7 @@ export function AdminSidebar({
   const groups = NAV_GROUPS.map((group) => ({
     ...group,
     items: group.items.filter(
-      (item) =>
-        (item.module === null || canView(role, item.module)) &&
-        (item.visibleFor === undefined || item.visibleFor(role)),
+      (item) => item.module === null || can(item.module),
     ),
   })).filter((group) => group.items.length > 0);
 

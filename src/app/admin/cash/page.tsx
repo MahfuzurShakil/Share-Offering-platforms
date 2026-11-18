@@ -20,9 +20,8 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, SelectInput, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { BANK_ACCOUNT_TYPES, type BankAccount, type BankAccountType } from '@/lib/db/types';
-import { canEdit } from '@/lib/domain/access';
 import { CASH_FLOW_LABEL, type CashFlowRow } from '@/lib/domain/cash';
 import type { AccountWithPosition } from '@/lib/repositories';
 import { bankAccountRepository } from '@/lib/repositories';
@@ -43,13 +42,13 @@ const TYPE_META: Record<BankAccountType, { label: string; icon: typeof Landmark 
  * what deliberately does not is defined in `lib/domain/cash.ts`.
  */
 export default function CashPositionPage() {
-  const { role, userId } = useMockSession();
+  const { can, userId } = useSession();
   const [adding, setAdding] = useState(false);
   const [editing, setEditing] = useState<BankAccount | null>(null);
   const [statementFor, setStatementFor] = useState<AccountWithPosition | null>(null);
 
   const position = useLiveQuery(() => bankAccountRepository.position(), []);
-  const mayEdit = canEdit(role, 'finance_expense');
+  const mayEdit = can('finance_expense', 'edit');
 
   if (position === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
 

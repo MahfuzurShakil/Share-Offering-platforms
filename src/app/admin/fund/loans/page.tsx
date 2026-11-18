@@ -12,8 +12,7 @@ import { Card } from '@/components/ui/Card';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { LENDER_TYPE_LABEL } from '@/lib/domain/revenue-share';
 import { loanRepository, type LoanRow } from '@/lib/repositories';
 import { formatBdt, formatDate } from '@/lib/utils/format';
@@ -24,8 +23,8 @@ import { formatBdt, formatDate } from '@/lib/utils/format';
  * project's Income & Profit tab or while covering a loss period.
  */
 export default function LoansPage() {
-  const { role } = useMockSession();
-  const mayEdit = canEdit(role, 'finance_expense');
+  const { can } = useSession();
+  const mayEdit = can('finance_expense', 'edit');
   const rows = useLiveQuery(() => loanRepository.rows(), []);
   const [repay, setRepay] = useState<LoanRow | null>(null);
   if (!rows) return <p className="text-sm text-ink-muted">Loading…</p>;

@@ -12,9 +12,8 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterBar, FilterSelect } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { WITHDRAWAL_STATUSES, type WithdrawalStatus } from '@/lib/db/types';
-import { canEdit } from '@/lib/domain/access';
 import { WITHDRAWAL_METHOD_LABEL, WITHDRAWAL_STATUS_META } from '@/lib/domain/revenue-share';
 import { profitWithdrawalRepository, type WithdrawalRow } from '@/lib/repositories';
 import { formatBdt, formatDate } from '@/lib/utils/format';
@@ -25,8 +24,8 @@ import { formatBdt, formatDate } from '@/lib/utils/format';
  * with a reason, or records the payment — which reaches Cash Position.
  */
 export default function WithdrawalsPage() {
-  const { role, userId } = useMockSession();
-  const mayEdit = canEdit(role, 'share_sale');
+  const { can, userId } = useSession();
+  const mayEdit = can('share_sale', 'edit');
   const rows = useLiveQuery(() => profitWithdrawalRepository.rows(), []);
   const [status, setStatus] = useState<WithdrawalStatus | 'open' | ''>('open');
   const [pay, setPay] = useState<WithdrawalRow | null>(null);

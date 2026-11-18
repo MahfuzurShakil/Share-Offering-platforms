@@ -14,9 +14,8 @@ import { Card } from '@/components/ui/Card';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { CustomerUpload, CustomerUploadStatus, ShareRequestStatus } from '@/lib/db/types';
-import { canEdit } from '@/lib/domain/access';
 import { FREQUENCY_LABEL } from '@/lib/domain/share-sale';
 import { customerPortalInbox, customerUploadRepository, paymentSubmissionRepository, shareSaleOverview, type RequestRow } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
@@ -46,8 +45,8 @@ const isOpenRequest = (r: RequestRow) => r.request.status === 'new' || r.request
  */
 function RequestsPage() {
   const params = useSearchParams();
-  const { role } = useMockSession();
-  const mayEdit = canEdit(role, 'share_sale');
+  const { can } = useSession();
+  const mayEdit = can('share_sale', 'edit');
   const inbox = useLiveQuery(() => customerPortalInbox(), []);
   const overview = useLiveQuery(() => shareSaleOverview(), []);
   const [tab, setTab] = useState<Tab>(params.get('tab') === 'documents' ? 'documents' : params.get('tab') === 'payments' ? 'payments' : 'requests');
@@ -268,7 +267,7 @@ function RequestsPage() {
         </div>
         <div className="p-5">
           {tab === 'payments' ? (
-            <PaymentVerifyPanel showAll={showAll} mayConfirm={canEdit(role, 'finance_collection')} />
+            <PaymentVerifyPanel showAll={showAll} mayConfirm={can('finance_collection', 'edit')} />
           ) : tab === 'requests' ? (
             <DataTable
               rows={requestRows}

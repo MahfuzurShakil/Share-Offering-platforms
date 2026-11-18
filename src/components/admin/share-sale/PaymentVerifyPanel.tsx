@@ -10,7 +10,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, TextArea } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { PaymentSubmissionStatus } from '@/lib/db/types';
 import { allocateSharePayment, installmentLabel } from '@/lib/domain/share-sale';
 import { OFFLINE_METHOD_LABEL, customerUploadRepository, paymentSubmissionInbox, paymentSubmissionRepository, shareSaleRepository, type SubmissionRow } from '@/lib/repositories';
@@ -30,7 +30,7 @@ const STATUS: Record<PaymentSubmissionStatus, { label: string; tone: BadgeTone }
  * date, so a slow check never costs them a late fee.
  */
 function ConfirmModal({ row, onClose }: { row: SubmissionRow; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const s = row.submission;
   const [account, setAccount] = useState(s.paid_into_account_id ?? '');
   const { error, busy, run } = useAction();
@@ -96,7 +96,7 @@ function ConfirmModal({ row, onClose }: { row: SubmissionRow; onClose: () => voi
 }
 
 function SendBackModal({ row, onClose }: { row: SubmissionRow; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [note, setNote] = useState('');
   const { error, busy, run } = useAction();
   return (

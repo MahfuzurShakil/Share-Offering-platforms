@@ -23,7 +23,7 @@ import {
 import { Button } from '@/components/ui/Button';
 import { Field, SelectInput, TextInput } from '@/components/ui/Field';
 import { WizardStepper, type WizardStep } from '@/components/ui/WizardStepper';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { Customer, CustomerUpload, ShareSignDraft } from '@/lib/db/types';
 import { addMonths } from '@/lib/domain/money';
 import { missingToSign, shareDocChecklist } from '@/lib/domain/share-documents';
@@ -84,7 +84,7 @@ function freshDraft(row: SaleRow, customer: Customer): ShareSignDraft {
  * reservation; it is checked against the offering when signing.
  */
 export function SignAgreementWizard({ row, uploads, onExit }: { row: SaleRow; uploads: CustomerUpload[]; onExit: (signed?: boolean) => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const s = row.sale;
   const o = row.offering;
   const customer = row.customer!;

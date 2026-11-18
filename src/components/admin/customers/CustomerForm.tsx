@@ -8,7 +8,7 @@ import { AlertTriangle, Info } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, TextArea, TextInput } from '@/components/ui/Field';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { Customer } from '@/lib/db/types';
 import {
   customerRepository,
@@ -50,7 +50,7 @@ const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
  */
 export function CustomerForm({ customer }: { customer?: CustomerWithRelations }) {
   const router = useRouter();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const isEdit = Boolean(customer);
 
   const [form, setForm] = useState<FormState>(customer ? toFormState(customer) : EMPTY);

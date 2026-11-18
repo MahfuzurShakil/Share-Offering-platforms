@@ -12,9 +12,8 @@ import { partnerColors } from '@/components/admin/fund/ShareBar';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { Partner } from '@/lib/db/types';
-import { canEdit } from '@/lib/domain/access';
 import { fundLedger, fundOverview, projectRepository, type FundOverview } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt } from '@/lib/utils/format';
@@ -27,8 +26,8 @@ type Tab = 'projects' | 'partners' | 'ledger';
  * received and spent, and how much of each partner's money is still unspent.
  */
 function FundPage() {
-  const { role } = useMockSession();
-  const mayEdit = canEdit(role, 'finance_expense');
+  const { can } = useSession();
+  const mayEdit = can('finance_expense', 'edit');
   const router = useRouter();
   const params = useSearchParams();
   const fromUrl = params.get('tab');

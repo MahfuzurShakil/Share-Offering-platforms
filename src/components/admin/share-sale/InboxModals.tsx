@@ -5,7 +5,7 @@ import { IdCard, MessageSquareText, Ticket } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { Customer, CustomerUpload, ShareOffering, ShareRequest } from '@/lib/db/types';
 import { SHARE_DOC_KINDS, SHARE_DOC_META } from '@/lib/domain/share-documents';
 import { FREQUENCY_LABEL } from '@/lib/domain/share-sale';
@@ -30,7 +30,7 @@ export async function openUpload(id: string) {
  * start from the request; the office changes them to what was agreed on the call.
  */
 export function ReserveFromRequestModal({ request, offering, available, customerName, onClose }: { request: ShareRequest; offering: ShareOffering; available: number; customerName: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [shares, setShares] = useState(String(request.shares));
   const [plan, setPlan] = useState(String(Math.min(request.installments, offering.max_installments)));
   const [downPct, setDownPct] = useState(String(request.installments === 0 ? 100 : offering.min_down_payment_pct));

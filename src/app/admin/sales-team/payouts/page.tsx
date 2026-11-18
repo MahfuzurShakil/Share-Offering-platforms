@@ -16,14 +16,14 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { payoutMath } from '@/lib/domain/commission';
 import { commissionPayoutRepository, type PayoutPreview, type PayoutRow } from '@/lib/repositories';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
 /** Pays one member all their approved lines; paid commission on cancelled sales comes off first. */
 function PayModal({ preview, onClose }: { preview: PayoutPreview; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [account, setAccount] = useState('');
   const [date, setDate] = useState(todayLocal());
   const [tax, setTax] = useState('10');

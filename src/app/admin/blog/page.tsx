@@ -11,7 +11,7 @@ import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { blogRepository } from '@/lib/repositories';
 import { formatDate, todayLocal } from '@/lib/utils/format';
 
@@ -20,7 +20,7 @@ import { formatDate, todayLocal } from '@/lib/utils/format';
  * Each post opens its own page for pictures, publishing and deleting.
  */
 export default function BlogAdminPage() {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const router = useRouter();
   const posts = useLiveQuery(() => blogRepository.list(), []);
   const [creating, setCreating] = useState(false);

@@ -6,7 +6,7 @@ import { ExternalLink } from 'lucide-react';
 import { ContentListEditor, type FieldSpec } from '@/components/admin/website/ContentListEditor';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { SubTabs } from '@/components/ui/SubTabs';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { AWARD_KINDS, FAQ_CATEGORIES, type AwardKind, type FaqCategory } from '@/lib/db/types';
 import {
   awardRepository,
@@ -43,7 +43,7 @@ const FAQ_LABEL: Record<FaqCategory, string> = {
 const isWebUrl = (v: string) => !v.trim() || /^https?:\/\//i.test(v.trim());
 
 export default function WebsiteContentPage() {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [tab, setTab] = useState<Tab>('testimonials');
   const testimonials = useLiveQuery(() => testimonialRepository.listOrdered(), []);
   const team = useLiveQuery(() => teamMemberRepository.listOrdered(), []);

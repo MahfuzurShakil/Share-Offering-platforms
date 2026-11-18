@@ -2,8 +2,8 @@
 
 import { createContext, useContext, type ReactNode } from 'react';
 import { Eye } from 'lucide-react';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { USER_ROLE_META } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
+import { humanize } from '@/lib/utils/format';
 
 /**
  * Section 9.6 inside a page (QA audit 2026-10-11, X-01).
@@ -32,11 +32,11 @@ export function useReadOnly(): boolean {
 
 /** One line saying why the actions are greyed out. */
 export function ViewOnlyNotice({ what }: { what: string }) {
-  const { role } = useMockSession();
+  const { role } = useSession();
   return (
     <p className="mb-4 flex items-center gap-2 rounded-xl border border-hairline bg-slate-50 px-3 py-2 text-xs text-ink-muted">
       <Eye className="size-3.5 shrink-0" />
-      View only. {USER_ROLE_META[role].label} can see this {what} but not change it.
+      View only. {role ? humanize(role) : 'Your role'} can see this {what} but not change it.
     </p>
   );
 }

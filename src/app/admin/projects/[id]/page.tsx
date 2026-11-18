@@ -15,8 +15,7 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ViewOnlyArea, ViewOnlyNotice } from '@/components/ui/ViewOnly';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
 import { PROJECT_TYPE_LABEL } from '@/lib/domain/project';
 import { projectRepository, userRepository } from '@/lib/repositories';
@@ -48,10 +47,10 @@ export default function ProjectDetailPage() {
   const [tab, setTab] = useState<Tab>('overview');
   const [confirmDelete, setConfirmDelete] = useState(false);
   // QA audit X-01 — viewing a project is not changing it (Section 9.6)
-  const { role } = useMockSession();
-  const mayEdit = canEdit(role, 'project');
+  const { can } = useSession();
+  const mayEdit = can('project', 'edit');
   // opening and pausing sales is also the sales team's call
-  const maySell = mayEdit || canEdit(role, 'share_sale');
+  const maySell = mayEdit || can('share_sale', 'edit');
 
   const project = useLiveQuery(() => projectRepository.get(id), [id]);
   // a project with purchases or money against it is closed, not deleted

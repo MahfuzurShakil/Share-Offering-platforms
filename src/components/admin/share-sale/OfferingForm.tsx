@@ -7,7 +7,7 @@ import { Calculator, Equal, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency, type ShareOffering } from '@/lib/db/types';
 import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct, offeringMath } from '@/lib/domain/share-sale';
 import { projectRepository, shareOfferingRepository } from '@/lib/repositories';
@@ -91,7 +91,7 @@ function Row({ label, children, strong }: { label: ReactNode; children: ReactNod
  */
 export function OfferingForm({ offering, projectId }: { offering?: ShareOffering; projectId?: string | null }) {
   const router = useRouter();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [d, setD] = useState<Draft>(() => fromOffering(offering, projectId ?? null));
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

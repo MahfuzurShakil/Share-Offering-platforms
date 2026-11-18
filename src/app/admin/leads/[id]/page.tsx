@@ -23,7 +23,7 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SelectInput } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { User } from '@/lib/db/types';
 import {
   FOLLOW_UP_META,
@@ -55,7 +55,7 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [tab, setTab] = useState<Tab>('overview');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [salesTeam, setSalesTeam] = useState<User[]>([]);

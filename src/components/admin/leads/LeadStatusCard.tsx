@@ -9,7 +9,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { Lead, LeadStatus } from '@/lib/db/types';
 import { LEAD_PIPELINE_STEPS, LEAD_STATUS_META, allowedNextLeadStatuses } from '@/lib/domain/lead';
 import { LOST_REASONS, leadStage, type LeadStage, type LeadStageField } from '@/lib/domain/lead-stages';
@@ -129,7 +129,7 @@ export function LeadStatusCard({ lead }: { lead: Lead }) {
 
 /** Completes the current stage: its date, its own questions, notes and the next follow-up. */
 function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const today = todayLocal();
   const [date, setDate] = useState(today);
   const [answers, setAnswers] = useState<Record<string, string>>(() => ({
@@ -281,7 +281,7 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
 
 /** The lead drops out — a reason from the list, so it can be reported on later. */
 function LostDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
@@ -336,7 +336,7 @@ function LostDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
 
 /** A lost lead comes back at the stage that makes sense, history intact (Section 4.6). */
 function ReviveDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const options = allowedNextLeadStatuses(lead.status);
   const [target, setTarget] = useState<LeadStatus>(options[0] ?? 'contacted');
   const [notes, setNotes] = useState('');

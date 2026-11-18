@@ -98,3 +98,44 @@ export function isAccessLevel(value: string): value is AccessLevel {
 export function isPermissionModule(value: string): value is PermissionModule {
   return (PERMISSION_MODULES as readonly string[]).includes(value);
 }
+
+/* ------------------------------------------------------------------ *
+ * Which module a screen belongs to
+ * ------------------------------------------------------------------ */
+
+/**
+ * The admin routes and the module each one answers to.
+ *
+ * Longest prefix wins, so a nested screen can belong to a different module
+ * than the section it sits under. The prototype's map also carried the land,
+ * construction and procurement routes; they come back with their modules.
+ */
+const ROUTE_MODULES: Array<[string, PermissionModule]> = [
+  ['/admin/projects', 'project'],
+  ['/admin/leads', 'crm'],
+  ['/admin/customers', 'share_sale'],
+  ['/admin/share-sale/profit', 'finance_collection'],
+  ['/admin/share-sale/withdrawals', 'finance_expense'],
+  ['/admin/share-sale', 'share_sale'],
+  ['/admin/sales-team', 'sales_team'],
+  ['/admin/cash', 'finance_expense'],
+  ['/admin/fund', 'finance_expense'],
+  ['/admin/users', 'user_management'],
+  ['/admin/master-data', 'master_data'],
+  ['/admin/settings', 'master_data'],
+  ['/admin/website', 'website'],
+  ['/admin/blog', 'website'],
+];
+
+/** The module a path belongs to, or null for a screen nobody has to hold rights to. */
+export function moduleForPath(pathname: string): PermissionModule | null {
+  const match = ROUTE_MODULES.filter(([prefix]) => pathname.startsWith(prefix)).sort(
+    (a, b) => b[0].length - a[0].length,
+  )[0];
+  return match?.[1] ?? null;
+}
+
+/** True when the path is a form — creating or editing, which needs more than view. */
+export function isFormPath(pathname: string): boolean {
+  return /\/(new|edit)(\/|$)/.test(pathname) || pathname.endsWith('/new');
+}

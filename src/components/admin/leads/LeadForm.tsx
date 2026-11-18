@@ -8,7 +8,7 @@ import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import {
   BUDGET_RANGE_OPTIONS,
   LEAD_SOURCES,
@@ -61,7 +61,7 @@ const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
  */
 export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
   const router = useRouter();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const isEdit = Boolean(lead);
 
   const [form, setForm] = useState<FormState>(lead ? toFormState(lead) : EMPTY);

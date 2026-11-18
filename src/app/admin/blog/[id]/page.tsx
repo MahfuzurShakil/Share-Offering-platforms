@@ -12,7 +12,7 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { blogRepository, documentRepository } from '@/lib/repositories';
 import { formatDate, todayLocal } from '@/lib/utils/format';
 
@@ -23,7 +23,7 @@ import { formatDate, todayLocal } from '@/lib/utils/format';
 export default function BlogPostPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   // null once looked up and missing, so a deleted post does not sit on "Loading…"
   const post = useLiveQuery(async () => (await blogRepository.getById(id)) ?? null, [id]);
   const docs = useLiveQuery(() => documentRepository.listForEntity('blog_post', id), [id]);

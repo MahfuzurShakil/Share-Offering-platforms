@@ -1,8 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { Globe, LayoutGrid, Menu, PanelLeft } from 'lucide-react';
-import { ROLES, useMockSession, type Role } from '@/lib/auth/mock-session';
+import { Globe, LayoutGrid, LogOut, Menu, PanelLeft } from 'lucide-react';
+import { useSession } from '@/lib/auth/session';
 import { humanize } from '@/lib/utils/format';
 
 /** Design Reference A.2 — logo/collapse and the user chip. */
@@ -13,7 +13,7 @@ export function AdminTopbar({
   onToggleSidebar: () => void;
   onOpenMenu: () => void;
 }) {
-  const { role, setRole, userName } = useMockSession();
+  const { role, userName, signOut } = useSession();
   // the avatar used to read a hardcoded "DU" while the name beside it changed
   // with the role, so the two disagreed about who was signed in
   const initials =
@@ -79,18 +79,8 @@ export function AdminTopbar({
         <div className="flex items-center gap-3">
           <div className="hidden text-right sm:block">
             <p className="text-sm font-medium leading-tight text-ink">{userName}</p>
-            {/* Phase A role simulation — no real auth */}
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as Role)}
-              className="cursor-pointer bg-transparent text-xs text-ink-muted outline-none"
-            >
-              {ROLES.map((r) => (
-                <option key={r} value={r}>
-                  {humanize(r)}
-                </option>
-              ))}
-            </select>
+            {/* the role is what the server says it is; there is nothing to choose */}
+            <p className="text-xs text-ink-muted">{role ? humanize(role) : '—'}</p>
           </div>
           <div className="relative">
             <span
@@ -101,6 +91,15 @@ export function AdminTopbar({
             </span>
             <span className="absolute bottom-0 right-0 size-2.5 rounded-full border-2 border-white bg-emerald-500" />
           </div>
+          <button
+            type="button"
+            onClick={() => signOut()}
+            title="Sign out"
+            aria-label="Sign out"
+            className="grid size-9 place-items-center rounded-lg text-ink-muted transition-colors hover:bg-admin-50 hover:text-admin-700"
+          >
+            <LogOut className="size-5" />
+          </button>
         </div>
       </div>
     </header>

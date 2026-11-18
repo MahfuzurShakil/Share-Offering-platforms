@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { LeadActivity, LeadActivityType } from '@/lib/db/types';
 import {
   FOLLOW_UP_META,
@@ -34,7 +34,7 @@ function formatDateTime(value: string): string {
 
 /** Follow-up log for one lead (Section 4.4) — the trail plus a "log" action. */
 export function LeadActivityPanel({ leadId }: { leadId: string }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<LeadActivityType>('call');
   const [notes, setNotes] = useState('');

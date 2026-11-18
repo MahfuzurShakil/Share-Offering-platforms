@@ -6,7 +6,7 @@ import { Banknote, CalendarRange, HandCoins, Landmark, LifeBuoy, Plus, Receipt, 
 import { Button } from '@/components/ui/Button';
 import { Checkbox, Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import {
   DISTRIBUTION_FREQUENCIES,
   ELIGIBILITY_RULES,
@@ -79,7 +79,7 @@ function AccountSelect({ value, onChange }: { value: string; onChange: (v: strin
 
 /** Plan §2.1 — turning revenue sharing on, or changing how it works. */
 export function PolicyModal({ projectId, policy, onClose }: { projectId: string; policy?: RevenuePolicy; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [f, setF] = useState<RevenuePolicyInput>(() => {
     if (!policy) return { ...DEFAULT_REVENUE_POLICY };
     const rest: Partial<RevenuePolicy> = { ...policy };
@@ -243,7 +243,7 @@ function useHeads() {
 
 /** One income or cost line. */
 export function EntryModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const heads = useHeads();
   const [direction, setDirection] = useState<RevenueDirection>('income');
   const [head, setHead] = useState('');
@@ -344,7 +344,7 @@ export function EntryModal({ projectId, onClose }: { projectId: string; onClose:
 
 /** Plan §2.2 — a day's register: one amount per head, typed like a ledger page. */
 export function DaySheetModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const heads = useHeads();
   const [date, setDate] = useState(todayLocal());
   const [accountId, setAccountId] = useState('');
@@ -430,7 +430,7 @@ export function DaySheetModal({ projectId, onClose }: { projectId: string; onClo
 
 /** Plan §2.3 — the statement a period would close with; closing freezes it. */
 export function ClosePeriodModal({ projectId, index, onClose }: { projectId: string; index: number; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const preview = useLiveQuery(() => previewPeriod(projectId, index), [projectId, index]);
   const policy = useLiveQuery(() => revenuePolicyRepository.forProject(projectId), [projectId]);
   const [error, setError] = useState('');
@@ -584,7 +584,7 @@ function loanTerms(f: LoanFields) {
 
 /** Borrowed money for the project; it comes in as a `loan` fund receipt. */
 export function LoanModal({ projectId, onClose }: { projectId: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [type, setType] = useState<LenderType>('bank');
   const [f, setF] = useState<LoanFields>(EMPTY_LOAN);
   const [amount, setAmount] = useState('');
@@ -662,7 +662,7 @@ export function LoanModal({ projectId, onClose }: { projectId: string; onClose: 
 }
 
 export function RepayModal({ row, onClose }: { row: LoanRow; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [principal, setPrincipal] = useState(String(Math.min(row.outstanding, row.loan.monthly_instalment || row.outstanding)));
   const [interest, setInterest] = useState('0');
   const [date, setDate] = useState(todayLocal());
@@ -732,7 +732,7 @@ interface CoverDraft {
 
 /** Plan §3 — how the money to keep running was found when the period lost money. */
 export function CoverLossModal({ period, uncovered, onClose }: { period: RevenuePeriod; uncovered: number; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [lines, setLines] = useState<CoverDraft[]>([{ source: 'person_loan', amount: String(uncovered), account_id: '', f: EMPTY_LOAN }]);
   const [date, setDate] = useState(todayLocal());
   const [error, setError] = useState('');
@@ -849,7 +849,7 @@ export function CoverLossModal({ period, uncovered, onClose }: { period: Revenue
 
 /** The office pays a holder's balance — a partner, or a customer who asked at the desk. */
 export function OfficeWithdrawalModal({ balance, onClose }: { balance: HolderBalance; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [amount, setAmount] = useState(String(balance.balance));
   const [method, setMethod] = useState<WithdrawalMethod>('bank_transfer');
   const [payTo, setPayTo] = useState('');
@@ -916,7 +916,7 @@ export function OfficeWithdrawalModal({ balance, onClose }: { balance: HolderBal
 
 /** Accounts records the payment of a request. */
 export function PayWithdrawalModal({ id, amount, who, onClose }: { id: string; amount: number; who: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [accountId, setAccountId] = useState('');
   const [date, setDate] = useState(todayLocal());
   const [reference, setReference] = useState('');
@@ -965,7 +965,7 @@ export function PayWithdrawalModal({ id, amount, who, onClose }: { id: string; a
 
 /** A reason is required: the customer sees it. */
 export function RejectWithdrawalModal({ id, onClose }: { id: string; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [reason, setReason] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);

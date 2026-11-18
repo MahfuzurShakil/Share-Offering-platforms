@@ -11,8 +11,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { Button } from '@/components/ui/Button';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { formatCrore, formatSharePct } from '@/lib/domain/share-sale';
 import { customerPortalInbox, shareSaleOverview, type OfferingRow } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
@@ -27,8 +26,8 @@ type Filter = 'all' | 'open' | 'draft' | 'ended';
  */
 export default function ShareOfferingsPage() {
   const router = useRouter();
-  const { role } = useMockSession();
-  const mayEdit = canEdit(role, 'share_sale');
+  const { can } = useSession();
+  const mayEdit = can('share_sale', 'edit');
   const data = useLiveQuery(() => shareSaleOverview(), []);
   const inbox = useLiveQuery(() => customerPortalInbox(), []);
   const [filter, setFilter] = useState<Filter>('all');

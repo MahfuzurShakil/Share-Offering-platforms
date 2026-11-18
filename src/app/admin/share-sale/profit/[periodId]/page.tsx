@@ -15,8 +15,7 @@ import { DataTable, type Column } from '@/components/ui/DataTable';
 import { ExportCsvButton } from '@/components/ui/ExportCsvButton';
 import { Field, MoneyInput, TextInput } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
-import { canEdit } from '@/lib/domain/access';
+import { useSession } from '@/lib/auth/session';
 import { LOSS_COVER_LABEL } from '@/lib/domain/revenue-share';
 import { revenuePeriodRepository, revenuePolicyRepository, type HolderLine } from '@/lib/repositories';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
@@ -28,8 +27,8 @@ import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
  */
 export default function PeriodPage() {
   const { periodId } = useParams<{ periodId: string }>();
-  const { role, userId } = useMockSession();
-  const mayEdit = canEdit(role, 'share_sale');
+  const { can, userId } = useSession();
+  const mayEdit = can('share_sale', 'edit');
   const detail = useLiveQuery(() => revenuePeriodRepository.detail(periodId), [periodId]);
   const policy = useLiveQuery(
     () => (detail ? revenuePolicyRepository.forProject(detail.period.project_id) : Promise.resolve(undefined)),

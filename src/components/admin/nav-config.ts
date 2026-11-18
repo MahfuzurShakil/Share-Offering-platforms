@@ -1,6 +1,5 @@
 import type { LucideIcon } from 'lucide-react';
-import type { ModuleKey } from '@/lib/domain/access';
-import type { UserRole } from '@/lib/db/types';
+import type { PermissionModule } from '@/lib/domain/permissions';
 import {
   Building2,
   Globe,
@@ -16,19 +15,14 @@ export interface NavItem {
   label: string;
   href: string;
   /**
-   * Which Section 9.6 module this item belongs to. The sidebar hides items the
-   * acting role cannot open, so the menu is the first place the permission
-   * matrix shows up rather than a table nobody reads.
+   * Which module this item belongs to. The sidebar hides items the signed-in
+   * role cannot open, reading the same rights the server enforces — so the
+   * menu is the first place a permission shows up rather than a table nobody
+   * reads, and it can never offer a screen the API would refuse.
    */
-  module: ModuleKey | null;
+  module: PermissionModule | null;
   /** modules not built yet render disabled, so the shell shows the full map */
   disabled?: boolean;
-  /**
-   * An extra condition on top of the module check, for a screen that belongs to
-   * groups depending on who is looking. Nothing uses it since the Site
-   * Progress group went (2026-10-11); kept for the next item that needs it.
-   */
-  visibleFor?: (role: UserRole) => boolean;
   /**
    * Other paths that belong to this item: a detail page that lives outside the
    * list's own path (a share purchase opened from Investors & Dues).

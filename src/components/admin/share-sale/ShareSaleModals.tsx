@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { Combobox } from '@/components/ui/Combobox';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import { SHARE_PAYMENT_METHODS, type SharePaymentMethod, type ShareOffering, type ShareSale } from '@/lib/db/types';
 import {
   FREQUENCY_LABEL,
@@ -47,7 +47,7 @@ export function useAction() {
 
 /** Holds shares for a customer — an existing one, or a new customer of type Investor. */
 export function ReserveModal({ offering, available, onClose }: { offering: ShareOffering; available: number; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const customers = useLiveQuery(() => customerRepository.getAll(), []);
   const sellers = useLiveQuery(() => orgMemberRepository.options(), []);
   const [soldBy, setSoldBy] = useState<string | null>(null);
@@ -205,7 +205,7 @@ export function ReserveModal({ offering, available, onClose }: { offering: Share
 
 /** Money received at the office or by bank; applied to late fees first, then the oldest installment. */
 export function RecordPaymentModal({ view, onClose }: { view: SaleView; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const today = todayLocal();
   const [date, setDate] = useState(today);
   const [amount, setAmount] = useState(String(view.due_now || (view.next ? view.next.remaining + view.next.late_fee_due : '')));

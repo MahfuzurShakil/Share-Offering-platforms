@@ -2,11 +2,12 @@
 
 import { useState, type ReactNode } from 'react';
 import { usePathname } from 'next/navigation';
-import { MockSessionProvider } from '@/lib/auth/mock-session';
+import { SessionProvider } from '@/lib/auth/session';
 import { useDatabaseStatus } from '@/lib/db/DatabaseProvider';
 import { AccessGate } from './AccessGate';
 import { AdminSidebar } from './AdminSidebar';
 import { AdminTopbar } from './AdminTopbar';
+import { SignInGate } from './SignInGate';
 
 /** Sidebar + topbar frame shared by every /admin page. */
 export function AdminShell({ children }: { children: ReactNode }) {
@@ -20,45 +21,49 @@ export function AdminShell({ children }: { children: ReactNode }) {
    * the chrome hidden. Rendering the sidebar and topbar and then suppressing
    * them in `@media print` would leave the shell's layout — its flex column,
    * its padding, its canvas background — shaping the sheet. So the shell steps
-   * aside entirely for `/print` routes, while `MockSessionProvider` and
-   * `AccessGate` stay: a document must still obey Section 9.6, and a URL
-   * pasted to the wrong role must not render a customer's money.
+   * aside entirely for `/print` routes, while the session, the sign-in check
+   * and `AccessGate` stay: a document must still obey the permission matrix,
+   * and a URL pasted to the wrong role must not render a customer's money.
    */
   if (pathname?.endsWith('/print')) {
     return (
-      <MockSessionProvider>
-        <div className="min-h-screen bg-canvas py-6 print:bg-white print:py-0">
-          <AccessGate>{children}</AccessGate>
-        </div>
-      </MockSessionProvider>
+      <SessionProvider>
+        <SignInGate>
+          <div className="min-h-screen bg-canvas py-6 print:bg-white print:py-0">
+            <AccessGate>{children}</AccessGate>
+          </div>
+        </SignInGate>
+      </SessionProvider>
     );
   }
 
   return (
-    <MockSessionProvider>
-      <div className="flex min-h-screen bg-canvas">
-        <AdminSidebar
-          collapsed={collapsed}
-          mobileOpen={mobileOpen}
-          onClose={() => setMobileOpen(false)}
-        />
-        <div className="flex min-w-0 flex-1 flex-col">
-          <AdminTopbar
-            onToggleSidebar={() => setCollapsed((c) => !c)}
-            onOpenMenu={() => setMobileOpen(true)}
+    <SessionProvider>
+      <SignInGate>
+        <div className="flex min-h-screen bg-canvas">
+          <AdminSidebar
+            collapsed={collapsed}
+            mobileOpen={mobileOpen}
+            onClose={() => setMobileOpen(false)}
           />
-          <main className="min-w-0 flex-1 p-4 lg:p-6">
-            {status === 'error' ? (
-              <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
-                Could not open the local database: {error}
-              </p>
-            ) : (
-              // Section 9.6 — the role check sits here so every page inherits it
-              <AccessGate>{children}</AccessGate>
-            )}
-          </main>
+          <div className="flex min-w-0 flex-1 flex-col">
+            <AdminTopbar
+              onToggleSidebar={() => setCollapsed((c) => !c)}
+              onOpenMenu={() => setMobileOpen(true)}
+            />
+            <main className="min-w-0 flex-1 p-4 lg:p-6">
+              {status === 'error' ? (
+                <p className="rounded-xl border border-red-200 bg-red-50 p-4 text-sm text-red-700">
+                  Could not open the local database: {error}
+                </p>
+              ) : (
+                // the role check sits here so every page inherits it
+                <AccessGate>{children}</AccessGate>
+              )}
+            </main>
+          </div>
         </div>
-      </div>
-    </MockSessionProvider>
+      </SignInGate>
+    </SessionProvider>
   );
 }

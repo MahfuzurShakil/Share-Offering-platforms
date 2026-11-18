@@ -13,7 +13,7 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { useReadOnly } from '@/components/ui/ViewOnly';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { CommissionLineStatus, CommissionSaleKind, OrgMember } from '@/lib/db/types';
 import { COMMISSION_LINE_STATUS_META } from '@/lib/domain/commission';
 import { commissionLineRepository, orgMemberRepository, partnerRepository, syncCommissions, userRepository } from '@/lib/repositories';
@@ -126,7 +126,7 @@ export function SaleCommissionCard({ kind, saleId, soldBy, editable: allowed }: 
 
 /** Add a member (optionally under someone) or edit one. Reporting changes go through a move. */
 export function MemberFormModal({ member, parentId, onClose }: { member?: OrgMember; parentId?: string | null; onClose: (saved?: OrgMember) => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const designations = useLiveQuery(() => orgMemberRepository.designations(), []);
   const members = useLiveQuery(() => orgMemberRepository.options(), []);
   const users = useLiveQuery(() => userRepository.getAll(), []);
@@ -242,7 +242,7 @@ export function MemberFormModal({ member, parentId, onClose }: { member?: OrgMem
 
 /** Puts a member (and their team) under someone else from a date; the old place stays in the history. */
 export function MoveMemberModal({ member, toParentId, onClose }: { member: OrgMember; toParentId?: string | null; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const members = useLiveQuery(() => orgMemberRepository.options(), []);
   const team = useLiveQuery(() => orgMemberRepository.teamIds(member.id), [member.id]);
   const [to, setTo] = useState<string | null>(toParentId === undefined ? null : toParentId);

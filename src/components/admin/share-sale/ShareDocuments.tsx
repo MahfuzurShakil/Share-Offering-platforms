@@ -8,7 +8,7 @@ import { Button } from '@/components/ui/Button';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Field, SelectInput, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { CustomerUpload, CustomerUploadKind, ShareSale } from '@/lib/db/types';
 import { SHARE_DOC_KINDS, docMeta, paperChecklist, shareDocScope, type ChecklistItem, type PaperOwner } from '@/lib/domain/share-documents';
 import { formatFileSize } from '@/lib/domain/file-upload';
@@ -82,7 +82,7 @@ export function OfficeUploadModal({
   replace?: CustomerUpload;
   onClose: () => void;
 }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [kind, setKind] = useState<CustomerUploadKind>(initialKind ?? kinds?.[0] ?? 'signed_copy');
   // "sale:<id>" or "booking:<id>" — one list for both kinds of holding
   const [target, setTarget] = useState(

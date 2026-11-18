@@ -7,57 +7,60 @@ import { ShieldAlert } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import {
-  MODULE_LABEL,
-  USER_ROLE_META,
-  canEdit,
-  canView,
+  PERMISSION_MODULE_LABEL,
+  isFormPath,
   moduleForPath,
-} from '@/lib/domain/access';
+} from '@/lib/domain/permissions';
+import { humanize } from '@/lib/utils/format';
 
 /**
- * Section 9.6, enforced at the route.
+ * The permission check, at the route.
  *
- * Hiding a menu item is presentation, not access control: the URL still works
- * if it is typed in or arrives in a link somebody pasted. One check in the
- * shell covers every page — putting it on each page instead would mean
- * remembering it on every page added afterwards, which is exactly the kind of
- * thing that gets forgotten.
+ * Hiding a menu item is presentation: the URL still works if it is typed in or
+ * arrives in a link somebody pasted. One check in the shell covers every page
+ * — putting it on each page instead would mean remembering it on every page
+ * added afterwards, which is exactly the kind of thing that gets forgotten.
  *
- * Phase A is still a role *simulation* (Section 0 — no real auth), so this
- * stops a role from wandering into the wrong screen; it is not a security
- * boundary. Phase B moves the same matrix behind the API, where it becomes
- * one.
+ * This is still not the boundary. The rights it reads come from the server, and
+ * the server checks them again on every `/api/v1` call, so a person who got
+ * past this would see an empty screen rather than somebody else's data. What
+ * it is for is telling them plainly that the screen is not theirs.
  */
 export function AccessGate({ children }: { children: ReactNode }) {
   const pathname = usePathname();
-  const { role } = useMockSession();
+  const { can, role, loading } = useSession();
 
   const moduleKey = moduleForPath(pathname);
+  if (!moduleKey) return <>{children}</>;
+
+  // until the rights have arrived, show nothing rather than a refusal
+  if (loading) return <p className="text-sm text-ink-muted">Loading…</p>;
+
   /*
    * QA audit 2026-10-11 (X-01): a form is not a view. A role that may only see
-   * a module could still type /new or /edit and save; those pages now need
-   * edit rights, the same right the page's own Edit button is gated on.
+   * a module could still type /new or /edit and save; those pages need edit
+   * rights, the same right the page's own Edit button is gated on.
    */
-  const isForm = /\/(new|edit)(\/|$)/.test(pathname);
-  if (!moduleKey) return <>{children}</>;
-  if (isForm ? canEdit(role, moduleKey) : canView(role, moduleKey)) return <>{children}</>;
+  const isForm = isFormPath(pathname);
+  if (isForm ? can(moduleKey, 'edit') : can(moduleKey)) return <>{children}</>;
 
-  const meta = USER_ROLE_META[role];
+  const label = PERMISSION_MODULE_LABEL[moduleKey];
+  const roleLabel = role ? humanize(role) : 'Your role';
 
   return (
     <EmptyState
       icon={ShieldAlert}
       title={
-        isForm && canView(role, moduleKey)
-          ? `${MODULE_LABEL[moduleKey]} is view only for this role`
-          : `${MODULE_LABEL[moduleKey]} is not open to this role`
+        isForm && can(moduleKey)
+          ? `${label} is view only for your role`
+          : `${label} is not open to your role`
       }
-      description={`${meta.label} — ${meta.description} Switch role from the topbar to see this screen, or ask a Super Admin for access.`}
+      description={`${roleLabel} does not have the rights for this screen. Ask a Super Admin to change your role's permissions in Users & Roles.`}
       action={
         <div className="flex flex-wrap items-center justify-center gap-2">
-          <Badge tone={meta.tone}>Acting as {meta.label}</Badge>
+          <Badge tone="neutral">Signed in as {roleLabel}</Badge>
           <Link href="/admin">
             <Button variant="outline">Back to the dashboard</Button>
           </Link>

@@ -1,5 +1,6 @@
 import type { Metadata } from 'next';
 import { Inter } from 'next/font/google';
+import { QueryProvider } from '@/lib/api/QueryProvider';
 import { DatabaseProvider } from '@/lib/db/DatabaseProvider';
 import './globals.css';
 
@@ -11,14 +12,20 @@ export const metadata: Metadata = {
 };
 
 /**
- * Root layout is intentionally thin — the two portals bring their own chrome:
- * src/app/admin/layout.tsx and src/app/(public)/layout.tsx.
+ * Root layout is intentionally thin — each portal brings its own chrome:
+ * src/app/admin/layout.tsx, src/app/(customer)/..., src/app/(public)/layout.tsx.
+ *
+ * `QueryProvider` is the cache every screen's `useApi` call reads through, so
+ * it has to be outside all of them. `DatabaseProvider` is the interim Dexie
+ * layer and goes when the last `useLiveQuery` does.
  */
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="en" className={`${inter.variable} h-full`}>
       <body className="min-h-full">
-        <DatabaseProvider>{children}</DatabaseProvider>
+        <QueryProvider>
+          <DatabaseProvider>{children}</DatabaseProvider>
+        </QueryProvider>
       </body>
     </html>
   );

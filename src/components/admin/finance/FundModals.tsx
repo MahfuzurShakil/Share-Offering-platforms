@@ -7,7 +7,7 @@ import { ShareBar, partnerColors } from '@/components/admin/fund/ShareBar';
 import { Button } from '@/components/ui/Button';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { FundSourceType, Partner } from '@/lib/db/types';
 import {
   bankAccountRepository,
@@ -132,7 +132,7 @@ export function PartnerModal({
   shareTotal: number;
   onClose: () => void;
 }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [kind, setKind] = useState<'company' | 'investor'>(partner?.project_id ? 'investor' : 'company');
   const [name, setName] = useState(partner?.name ?? '');
   const [phone, setPhone] = useState(partner?.phone ?? '');
@@ -346,7 +346,7 @@ export function PartnerModal({
 
 /** Money coming in that is not a sale: capital, a loan, anything else. */
 export function MoneyInModal({ onClose }: { onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const partners = useLiveQuery(() => partnerRepository.list(), []);
   const accounts = useLiveQuery(() => bankAccountRepository.options(), []);
   const projects = useLiveQuery(() => projectRepository.list(), []);
@@ -577,7 +577,7 @@ export function MoneyInModal({ onClose }: { onClose: () => void }) {
  * what it owes, so the owner can see which one needs money.
  */
 export function AllocateModal({ overview, onClose }: { overview: FundOverview; onClose: () => void }) {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const projects = useLiveQuery(() => projectRepository.list(), []);
   const [projectId, setProjectId] = useState('');
   const [amount, setAmount] = useState('');

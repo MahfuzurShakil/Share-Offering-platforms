@@ -19,7 +19,7 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useMockSession } from '@/lib/auth/mock-session';
+import { useSession } from '@/lib/auth/session';
 import type { LookupValue } from '@/lib/db/types';
 import { DuplicateLookupError, SystemOptionError, lookupRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
@@ -40,7 +40,7 @@ function groupTitle(category: string, scope: string | null): string {
  * `lookup_values`.
  */
 export default function MasterDataPage() {
-  const { userId } = useMockSession();
+  const { userId } = useSession();
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [addTo, setAddTo] = useState<{ category: string; scope: string | null } | null>(null);
   const [renaming, setRenaming] = useState<LookupValue | null>(null);
