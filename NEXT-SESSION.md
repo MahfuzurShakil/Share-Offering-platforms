@@ -32,6 +32,24 @@ Written 18 Nov 2026, at commit `f87eda4`. Working tree clean, six commits in.
 4. Then the next schema slice (customers, share offerings, share sales,
    installments, payments) and the same path for Share Sale.
 
+## How we divide the work
+
+The user runs the browser steps themselves and reports back in a sentence —
+"it saved but the list is empty" replaces five to eight browser tool calls. So:
+
+- finish a batch, make `npm test`, `npm run lint`, `npx tsc --noEmit` and the
+  build green, commit, then hand the user the exact steps to try and ask what
+  they saw. A screenshot or pasted console text is enough; do not go and look
+  unless they ask or it is a visual judgement nothing else can settle.
+- put the weight of verification in tests against the real database. Today's
+  125 cover audit rows, rate limiting, OTP, sessions and the login API without
+  a browser at all.
+- grow `scripts/demo/*` — it creates data through the real REST API — rather
+  than clicking the same flow by hand.
+- **start a fresh session per batch.** A long session re-reads its whole
+  history on every message, which costs more than any amount of testing. This
+  file exists so a new session needs none of that history.
+
 ## How to run and check
 
 ```bash
