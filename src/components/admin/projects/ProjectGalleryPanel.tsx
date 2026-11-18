@@ -7,8 +7,10 @@ import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useBlobUrl } from '@/components/ui/useBlobUrl';
-import type { DocumentRecord, Project } from '@/lib/db/types';
-import { documentRepository, projectRepository } from '@/lib/repositories';
+import type { DocumentRecord } from '@/lib/db/types';
+import { projectKeys, projectsApi, type ApiProject } from '@/lib/api/projects';
+import { useApiMutation } from '@/lib/api/use-api';
+import { documentRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 
 /**
@@ -25,7 +27,24 @@ import { cn } from '@/lib/utils/cn';
  * Upload stays in the Documents tab, which is where every module puts files.
  * This is the view over the subset that is pictures.
  */
-export function ProjectGalleryPanel({ project }: { project: Project }) {
+export function ProjectGalleryPanel({ project }: { project: ApiProject }) {
+  /*
+   * The project is a Postgres record now; the files are still the interim Dexie
+   * scaffolding, so this screen reads from both until documents and file
+   * storage move (S4). Which picture the website leads with is a column on the
+   * project, so that half goes through the API.
+   */
+  const setDisplay = useApiMutation(
+    (documentId: string) =>
+      projectsApi.update(project.id, {
+        cover_image_document_id: documentId,
+        // the uploaded picture wins, so a stale pasted URL cannot quietly keep
+        // being the one the website shows
+        cover_image_url: null,
+      }),
+    [projectKeys.all],
+  );
+
   const documents = useLiveQuery(
     () => documentRepository.listForEntity('project', project.id),
     [project.id],
@@ -57,14 +76,7 @@ export function ProjectGalleryPanel({ project }: { project: Project }) {
             key={picture.id}
             picture={picture}
             isDisplay={project.cover_image_document_id === picture.id}
-            onUseAsDisplay={() =>
-              projectRepository.update(project.id, {
-                cover_image_document_id: picture.id,
-                // the uploaded picture wins, so a stale pasted URL cannot
-                // quietly keep being the one the website shows
-                cover_image_url: null,
-              })
-            }
+            onUseAsDisplay={() => setDisplay.mutate(picture.id)}
           />
         ))}
       </div>

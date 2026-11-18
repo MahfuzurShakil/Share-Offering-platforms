@@ -1,17 +1,21 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { ProjectForm } from '@/components/admin/projects/ProjectForm';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { projectRepository } from '@/lib/repositories';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { useApiQuery } from '@/lib/api/use-api';
 
 export default function EditProjectPage() {
   const { id } = useParams<{ id: string }>();
-  const project = useLiveQuery(() => projectRepository.get(id), [id]);
+  const { data: project, isPending, isError } = useApiQuery(projectKeys.one(id), (signal) =>
+    projectsApi.get(id, signal),
+  );
 
-  if (project === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!project) return <p className="text-sm text-ink-muted">This project no longer exists.</p>;
+  if (isPending) return <p className="text-sm text-ink-muted">Loading…</p>;
+  if (isError || !project) {
+    return <p className="text-sm text-ink-muted">This project no longer exists.</p>;
+  }
 
   return (
     <>

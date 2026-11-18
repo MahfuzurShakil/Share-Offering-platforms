@@ -64,7 +64,8 @@ describe('api routes', () => {
     '%s answers through the shared envelope',
     (_name, file) => {
       const source = readFileSync(file, 'utf8');
-      expect(/\bhandler\s*\(/.test(source)).toBe(true);
+      // `handler(...)`, or `handler<Context>(...)` on a route with a [id] param
+      expect(/\bhandler\s*(<[^>]*>)?\s*\(/.test(source)).toBe(true);
       // a raw NextResponse.json would skip the error shape and the audit actor
       expect(/NextResponse\.json\(/.test(source)).toBe(false);
     },

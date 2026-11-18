@@ -8,14 +8,18 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Checkbox, Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { useBlobUrl } from '@/components/ui/useBlobUrl';
-import { LAND_SIZE_UNITS, type LandSizeUnit, type Project } from '@/lib/db/types';
+import { LAND_SIZE_UNITS, type LandSizeUnit } from '@/lib/db/types';
 import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
+import { fieldErrorsOf, messageOf } from '@/lib/api/client';
 import {
-  documentRepository,
-  lookupRepository,
-  projectRepository,
-  userRepository,
-} from '@/lib/repositories';
+  assignableUserKeys,
+  assignableUsersApi,
+  projectKeys,
+  projectsApi,
+  type ApiProject,
+} from '@/lib/api/projects';
+import { useApi, useRefresh } from '@/lib/api/use-api';
+import { documentRepository, lookupRepository } from '@/lib/repositories';
 
 interface FormState {
   name: string;
@@ -41,7 +45,7 @@ const EMPTY: FormState = {
 
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 
-function toFormState(p: Project): FormState {
+function toFormState(p: ApiProject): FormState {
   return {
     name: p.name,
     location_summary: str(p.location_summary),
@@ -49,7 +53,7 @@ function toFormState(p: Project): FormState {
     total_land_area_unit: p.total_land_area_unit ?? 'katha',
     expected_start_date: str(p.expected_start_date),
     expected_completion_date: str(p.expected_completion_date),
-    project_manager: str(p.project_manager),
+    project_manager: str(p.project_manager_id),
     surroundings: str(p.surroundings),
   };
 }
@@ -68,12 +72,13 @@ function toFormState(p: Project): FormState {
  * product is sold as shares), the construction and development timelines, the
  * architect, and the amenity list for a building that is not being built.
  */
-export function ProjectForm({ project }: { project?: Project }) {
+export function ProjectForm({ project }: { project?: ApiProject }) {
   const router = useRouter();
 
+  const refresh = useRefresh([projectKeys.all]);
   const [form, setForm] = useState<FormState>(project ? toFormState(project) : EMPTY);
   const managers =
-    useLiveQuery(() => userRepository.listByRole(['project_manager', 'management']), []) ?? [];
+    useApi(assignableUserKeys.all, (signal) => assignableUsersApi.list(signal)) ?? [];
   const [amenities, setAmenities] = useState<string[]>(project?.amenities ?? []);
   const [amenityOptions, setAmenityOptions] = useState<string[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
@@ -96,22 +101,16 @@ export function ProjectForm({ project }: { project?: Project }) {
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
 
-  // QA 2026-10-11 — two projects with one name are two answers to "which one?"
-  const takenNames = useLiveQuery(
-    async () =>
-      new Set(
-        (await projectRepository.getAll())
-          .filter((p) => p.id !== project?.id)
-          .map((p) => p.name.trim().toLowerCase()),
-      ),
-    [project?.id],
-  );
+  /*
+   * Two projects with one name are two answers to "which one?" (QA 2026-10-11)
+   * — the check is the server's now: it holds against a save made in another
+   * tab, which a list loaded into this browser never could. It comes back as a
+   * field error on `name`.
+   */
 
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = 'Project name is required';
-    else if (takenNames?.has(form.name.trim().toLowerCase()))
-      next.name = 'Another project already has this name';
     if (form.total_land_area.trim() && !(Number(form.total_land_area) > 0)) {
       next.total_land_area = 'Enter the area as a number, or leave it blank';
     }
@@ -136,30 +135,23 @@ export function ProjectForm({ project }: { project?: Project }) {
         name: form.name.trim(),
         location_summary: form.location_summary.trim() || null,
         total_land_area: area,
-        total_land_area_unit: area !== null ? form.total_land_area_unit : undefined,
+        total_land_area_unit: area === null ? null : form.total_land_area_unit,
         expected_start_date: form.expected_start_date || null,
         expected_completion_date: form.expected_completion_date || null,
-        project_manager: form.project_manager || null,
+        project_manager_id: form.project_manager || null,
         surroundings: form.surroundings.trim() || null,
         amenities,
       };
 
-      let saved: Project;
-      if (project) {
-        saved = (await projectRepository.update(project.id, payload)) as Project;
-      } else {
-        saved = await projectRepository.create({
-          ...payload,
-          code: '',
-          // every project in this product is sold as shares
-          project_type: 'land_share',
-          status: 'planning',
-          is_public: false,
-          is_featured: false,
-        });
-      }
+      const saved: ApiProject = project
+        ? await projectsApi.update(project.id, payload)
+        : await projectsApi.create(payload);
 
-      // the uploaded picture becomes a gallery document and the display picture
+      /*
+       * The picture is still an interim Dexie document — file storage is S4 —
+       * so the file is kept there and only the reference to it goes to the
+       * project over the API.
+       */
       if (coverFile) {
         const doc = await documentRepository.create({
           entity_type: 'project',
@@ -176,16 +168,22 @@ export function ProjectForm({ project }: { project?: Project }) {
           uploaded_at: new Date().toISOString(),
           notes: 'Display picture, uploaded with the project',
         });
-        await projectRepository.update(saved.id, {
+        await projectsApi.update(saved.id, {
           cover_image_document_id: doc.id,
           cover_image_url: null,
         });
       }
 
+      /*
+       * The list and the detail screen are now server data, so they are told
+       * to refetch rather than being left with what they had.
+       */
+      await refresh();
       router.push(`/admin/projects/${saved.id}`);
     } catch (err) {
-      // QA audit P-08 — a failure is said, not swallowed
-      setErrors((prev) => ({ ...prev, form: err instanceof Error ? err.message : String(err) }));
+      // QA audit P-08 — a failure is said, not swallowed, and the server's own
+      // field errors land beside the inputs they are about
+      setErrors((prev) => ({ ...prev, ...fieldErrorsOf(err), form: messageOf(err) }));
     } finally {
       setSaving(false);
     }

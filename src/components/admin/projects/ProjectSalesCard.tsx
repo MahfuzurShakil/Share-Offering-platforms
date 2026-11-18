@@ -8,13 +8,15 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Checkbox } from '@/components/ui/Field';
-import type { Project, ProjectSalesStatus } from '@/lib/db/types';
+import type { ProjectSalesStatus } from '@/lib/db/types';
 import {
   PROJECT_SALES_STATUS_META,
   SALES_MOVE_LABEL,
   projectSalesStatus,
 } from '@/lib/domain/project';
-import { projectRepository } from '@/lib/repositories';
+import { messageOf } from '@/lib/api/client';
+import { projectKeys, projectsApi, type ApiProject } from '@/lib/api/projects';
+import { useApiMutation } from '@/lib/api/use-api';
 import { websiteReadiness, type WebsiteReadinessItem } from '@/lib/repositories/public/project.public.repository';
 
 const MOVE_QUESTION: Record<ProjectSalesStatus, string> = {
@@ -33,10 +35,29 @@ const MOVE_QUESTION: Record<ProjectSalesStatus, string> = {
  * construction modules. What a share project is held to instead lives on the
  * offering: its valuation, price per share and how much of the round is left.
  */
-export function ProjectSalesCard({ project }: { project: Project }) {
+export function ProjectSalesCard({ project }: { project: ApiProject }) {
   const [target, setTarget] = useState<ProjectSalesStatus | null>(null);
-  const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+
+  /*
+   * Which moves are allowed, and that unpublishing takes the project off the
+   * home page with it, are the server's rules now — the buttons below only
+   * offer the moves; the API refuses anything else with the reason.
+   */
+  const move = useApiMutation(
+    (to: ProjectSalesStatus) => projectsApi.setSalesStatus(project.id, to),
+    [projectKeys.all],
+  );
+  const publish = useApiMutation(
+    (patch: { is_public?: boolean; is_featured?: boolean }) =>
+      projectsApi.update(project.id, patch),
+    [projectKeys.all],
+  );
+  /*
+   * The website checklist still reads the interim Dexie layer, so it is empty
+   * (and hidden) until the public-site reads move to Postgres with the
+   * share-sale slice — the offering it checks for a price on lives there.
+   */
   const website = useLiveQuery(() => websiteReadiness(project.id), [project.id, project.updated_at]);
 
   const current = projectSalesStatus(project);
@@ -52,15 +73,12 @@ export function ProjectSalesCard({ project }: { project: Project }) {
 
   async function confirm() {
     if (!target) return;
-    setBusy(true);
     setError('');
     try {
-      await projectRepository.setSalesStatus(project.id, target);
+      await move.mutateAsync(target);
       setTarget(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : String(e));
-    } finally {
-      setBusy(false);
+      setError(messageOf(e));
     }
   }
 
@@ -97,18 +115,13 @@ export function ProjectSalesCard({ project }: { project: Project }) {
             label="Show on the public website"
             checked={project.is_public}
             disabled={current === 'not_open' && !project.is_public}
-            onChange={(e) =>
-              projectRepository.update(project.id, {
-                is_public: e.target.checked,
-                ...(e.target.checked ? {} : { is_featured: false }),
-              })
-            }
+            onChange={(e) => publish.mutate({ is_public: e.target.checked })}
           />
           <Checkbox
             label="Feature on the home page"
             checked={project.is_featured}
             disabled={!project.is_public}
-            onChange={(e) => projectRepository.update(project.id, { is_featured: e.target.checked })}
+            onChange={(e) => publish.mutate({ is_featured: e.target.checked })}
           />
           {current === 'not_open' && !project.is_public && (
             <p className="text-xs text-ink-muted">Open sales first, then publish.</p>
@@ -126,7 +139,7 @@ export function ProjectSalesCard({ project }: { project: Project }) {
         icon={ShoppingBag}
         confirmLabel={target ? SALES_MOVE_LABEL[target] : 'Confirm'}
         message={target ? MOVE_QUESTION[target] : undefined}
-        busy={busy}
+        busy={move.isPending}
         onCancel={() => {
           setTarget(null);
           setError('');

@@ -1,18 +1,8 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import {
-  Building2,
-  CalendarDays,
-  Globe,
-  MapPin,
-  Plus,
-  Search,
-  Star,
-  Wallet,
-} from 'lucide-react';
+import { useState } from 'react';
+import { Building2, CalendarDays, Globe, MapPin, Plus, Search, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -31,8 +21,9 @@ import {
   projectStatusLabel,
 } from '@/lib/domain/project';
 import { PROJECT_SALES_STATUSES, type ProjectSalesStatus } from '@/lib/db/types';
-import { projectRepository, projectOwnership } from '@/lib/repositories';
-import { formatBdt, formatDate } from '@/lib/utils/format';
+import { useApi } from '@/lib/api/use-api';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { formatDate } from '@/lib/utils/format';
 
 type SortKey = 'newest' | 'oldest' | 'completion_soon' | 'name';
 
@@ -45,54 +36,38 @@ export default function ProjectsListPage() {
   const [sort, setSort] = useState<SortKey>('newest');
   const [view, setView] = useState<ViewMode>('list');
 
-  const projects = useLiveQuery(
-    () =>
-      projectRepository.list({
-        search,
-        ...(publicOnly ? { is_public: true } : {}),
-      }),
-    [search, publicOnly],
-  );
-
-  const allProjects = useLiveQuery(() => projectRepository.getAll(), []);
-
-  /**
-   * How much of each project has been sold as shares, and what that raised, so
-   * several projects can be compared without opening each one.
+  /*
+   * The filtering and the sorting happen in Postgres now, not in the browser:
+   * a list that filters after it has fetched everything stops working at the
+   * first few hundred rows, and `search` is a case-insensitive LIKE the
+   * database can index. The pager below still pages what came back — the
+   * server-paged lists are S3's batch — so the page size asked for is generous.
    */
-  const shareStats = useLiveQuery(async () => {
-    const stats = new Map<string, { sold_pct: number; raised: number }>();
-    for (const project of (await projectRepository.getAll()) ?? []) {
-      const own = await projectOwnership(project.id);
-      stats.set(project.id, {
-        sold_pct: Math.round(own.customers_pct * 10) / 10,
-        raised: own.rows.reduce((t, r) => t + r.raised, 0),
-      });
-    }
-    return stats;
-  }, []);
+  const query = {
+    search: search.trim() || undefined,
+    ...(publicOnly ? { is_public: true } : {}),
+    ...(sales === 'all' ? {} : { sales_status: sales }),
+    sort,
+    page_size: 200,
+  } as const;
 
-  const rows = useMemo(() => {
-    const list = (projects ?? []).filter((p) => sales === 'all' || projectSalesStatus(p) === sales);
-    switch (sort) {
-      case 'oldest':
-        return list.sort((a, b) => a.created_at.localeCompare(b.created_at));
-      case 'completion_soon':
-        // undated projects (still planning) sort last
-        return list.sort((a, b) =>
-          (a.expected_completion_date ?? '9999').localeCompare(b.expected_completion_date ?? '9999'),
-        );
-      case 'name':
-        return list.sort((a, b) => a.name.localeCompare(b.name));
-      default:
-        return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-  }, [projects, sort, sales]);
+  const projects = useApi(projectKeys.list(query), (signal) => projectsApi.list(query, signal));
+  const rows = projects ?? [];
+
+  /*
+   * "No project yet" and "nothing matches these filters" are different things
+   * to say, so the unfiltered count is asked for separately — one row, for its
+   * total.
+   */
+  const anyPage = useApi(
+    projectKeys.list({ page_size: 1 }),
+    (signal) => projectsApi.page({ page_size: 1 }, signal),
+  );
 
   const paged = usePagination(rows);
 
   const loading = projects === undefined;
-  const hasAny = (allProjects?.length ?? 0) > 0;
+  const hasAny = (anyPage?.meta.total ?? 0) > 0;
   const filtersActive =
     Boolean(search) || publicOnly || sales !== 'all';
 
@@ -221,7 +196,6 @@ export default function ProjectsListPage() {
               <ResultsLayout view={view}>
                 {paged.pageRows.map((project) => {
                   const meta = PROJECT_STATUS_META[project.status];
-                  const stats = shareStats?.get(project.id);
                   return (
                     <ResultCard
                       key={project.id}
@@ -260,15 +234,13 @@ export default function ProjectsListPage() {
                           <Badge tone={PROJECT_SALES_STATUS_META[projectSalesStatus(project)].tone}>
                             {PROJECT_SALES_STATUS_META[projectSalesStatus(project)].label}
                           </Badge>
-                          {stats && stats.sold_pct > 0 && (
-                            <Badge tone="blue">{stats.sold_pct}% of the project sold</Badge>
-                          )}
-                          {stats && stats.raised > 0 && (
-                            <Badge tone="green">
-                              <Wallet className="size-3.5" />
-                              {formatBdt(stats.raised)} raised
-                            </Badge>
-                          )}
+                          {/*
+                            How much of each project is sold and what it raised
+                            used to be computed here from the share tables. They
+                            move to Postgres with the share-sale slice (S2) and
+                            come back as fields on this list then, counted by
+                            the database rather than by the browser.
+                          */}
                           {project.is_public && (
                             <Badge tone="green">
                               <Globe className="size-3.5" /> Public

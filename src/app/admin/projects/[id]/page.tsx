@@ -3,7 +3,6 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowLeft, Globe, Pencil, Star, Trash2 } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
 import { ProjectGalleryPanel } from '@/components/admin/projects/ProjectGalleryPanel';
@@ -18,7 +17,9 @@ import { ViewOnlyArea, ViewOnlyNotice } from '@/components/ui/ViewOnly';
 import { useSession } from '@/lib/auth/session';
 import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
 import { PROJECT_TYPE_LABEL } from '@/lib/domain/project';
-import { projectRepository, userRepository } from '@/lib/repositories';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { messageOf } from '@/lib/api/client';
+import { useApi, useApiMutation } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 import { formatDate } from '@/lib/utils/format';
 
@@ -52,16 +53,15 @@ export default function ProjectDetailPage() {
   // opening and pausing sales is also the sales team's call
   const maySell = mayEdit || can('share_sale', 'edit');
 
-  const project = useLiveQuery(() => projectRepository.get(id), [id]);
-  // a project with purchases or money against it is closed, not deleted
-  const deleteBlocked = useLiveQuery(() => projectRepository.deleteBlockReason(id), [id]);
-  const manager = useLiveQuery(
-    () =>
-      project?.project_manager
-        ? userRepository.getById(project.project_manager)
-        : Promise.resolve(undefined),
-    [project?.project_manager],
-  );
+  const project = useApi(projectKeys.one(id), (signal) => projectsApi.get(id, signal));
+  const [deleteError, setDeleteError] = useState('');
+
+  /*
+   * A project with money against it is closed, not deleted — and the server is
+   * what knows that, so the question is not asked up front any more: DELETE
+   * answers 409 with the reason, which is shown in the dialog.
+   */
+  const remove = useApiMutation(() => projectsApi.remove(id), [projectKeys.all]);
 
   if (project === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
   if (!project) {
@@ -154,7 +154,7 @@ export default function ProjectDetailPage() {
                     }
                   />
                   {/* Scope v3 §3.3 — who runs this project */}
-                  <Row label="Project manager" value={manager?.name} />
+                  <Row label="Project manager" value={project.project_manager_name} />
                   <Row label="Sales start" value={formatDate(project.expected_start_date)} />
                   <Row
                     label="Target sell-out"
@@ -246,14 +246,24 @@ export default function ProjectDetailPage() {
         title={`Delete ${project.code}`}
         subtitle={project.name}
         confirmLabel="Delete project"
-        message={deleteBlocked ?? 'This deletes the project with its documents. It cannot be undone.'}
-        disabled={Boolean(deleteBlocked)}
-        onCancel={() => setConfirmDelete(false)}
-        onConfirm={async () => {
-          await projectRepository.removeCascade(project.id);
-          router.push('/admin/projects');
+        message="This deletes the project with its documents. It cannot be undone."
+        busy={remove.isPending}
+        onCancel={() => {
+          setConfirmDelete(false);
+          setDeleteError('');
         }}
-      />
+        onConfirm={async () => {
+          setDeleteError('');
+          try {
+            await remove.mutateAsync(undefined);
+            router.push('/admin/projects');
+          } catch (error) {
+            setDeleteError(messageOf(error));
+          }
+        }}
+      >
+        {deleteError && <p className="text-sm text-red-600">{deleteError}</p>}
+      </ConfirmDialog>
     </>
   );
 }
