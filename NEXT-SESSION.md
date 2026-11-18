@@ -1,6 +1,9 @@
 # Next session — where to pick up
 
-Written 18 Nov 2026, last revised after the Projects batch. Working tree clean.
+Written 18 Nov 2026, last revised after the Projects batch and its browser
+check. Working tree clean, pushed to `origin`
+(github.com/MahfuzurShakil/Share-Offering-platforms); `prototype` stays as the
+local remote Phase 2 reads Land and Construction back out of.
 
 ## What is done
 
@@ -18,10 +21,10 @@ Written 18 Nov 2026, last revised after the Projects batch. Working tree clean.
 
 ## Start here
 
-1. **Browser pass on Projects** (the one thing not yet checked by a person):
-   `npm run db:seed`, `npm run create-admin`, then `npm run build && npm run start -- -p 3002`
-   — sign in, create a project, see it in the list and on its own page, open
-   sales, publish it, and check the `audit_log` rows it left.
+1. **Projects passed its browser check** (18 Nov 2026): signed in, created
+   `PRJ-2026-002`, the code came from the series, the manager's name came back
+   from the join, the area crossed as a number and the search ran in Postgres.
+   Nothing is outstanding on it.
 2. **The next schema slice**: customers, share offerings, share sales,
    installments, payments — then the same path for Share Sale (S2).
 3. **What the Projects move cost, as measured**: the service, routes and typed
@@ -36,6 +39,30 @@ Written 18 Nov 2026, last revised after the Projects batch. Working tree clean.
    share-sale offerings and the user form. They come right as their own
    modules move — but a demo of those screens before then will look empty.
    `scripts/demo/01-projects.ts` (through the REST API) is still to write.
+
+## Decisions waiting for S2
+
+Two things the Projects browser pass (18 Nov 2026) raised. Neither is a bug and
+neither is decided yet — they are written here, not in `OPEN-ITEMS.md`, because
+that file is the prototype's history and these are Phase 1's own questions.
+
+1. **The project form asks for very little.** Deliberate at the time — the
+   prototype's tower, architect, floor and construction fields went with the
+   modules that own them — but what a *share* project should carry has never
+   been worked out: what an investor actually wants to see before they buy,
+   and what the public listing needs to be convincing. The client wants a
+   market look at comparable platforms before fields are chosen. Do it after
+   S2, not before: the offering and holding screens will show what is already
+   said elsewhere, so the list of missing fields gets shorter, and adding
+   several columns in one migration is cheaper than three rounds of one.
+2. **`expected_start_date` / `expected_completion_date` on the project are
+   probably the wrong home.** The real selling window belongs to the share
+   offering — when the round opens and closes, the price, how much is left —
+   and once offerings exist, these two dates are at best a planning hint.
+   Decide when S2's offering screens are up: if nobody reads them, take the
+   two fields off the form (the columns stay, so no migration is needed) and
+   let the project show the window of its live offering instead. Do not remove
+   them before then, or the same migration gets written twice.
 
 ## How we divide the work
 
