@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { NextResponse, type NextRequest } from 'next/server';
-import { ZodError, type ZodType } from 'zod';
+import { ZodError, type ZodType, type output as ZodOutput } from 'zod';
 import { withActor } from '../audit/context';
 import { AuthError, principalFrom } from '../auth/rbac';
 
@@ -96,8 +96,16 @@ export const invalid = (message: string, fields?: Record<string, string>) =>
   new ApiError('invalid', message, fields);
 export const conflict = (message: string) => new ApiError('conflict', message);
 
-/** Reads and validates a JSON body, turning a zod failure into field errors. */
-export async function readJson<T>(request: NextRequest, schema: ZodType<T>): Promise<T> {
+/**
+ * Reads and validates a JSON body, turning a zod failure into field errors.
+ *
+ * The result is the schema's *output* type, so a `.default()` in the schema is
+ * a field the service can rely on rather than one it has to re-check.
+ */
+export async function readJson<S extends ZodType>(
+  request: NextRequest,
+  schema: S,
+): Promise<ZodOutput<S>> {
   let raw: unknown;
   try {
     raw = await request.json();
@@ -110,7 +118,7 @@ export async function readJson<T>(request: NextRequest, schema: ZodType<T>): Pro
 }
 
 /** The same for query parameters. */
-export function readQuery<T>(request: NextRequest, schema: ZodType<T>): T {
+export function readQuery<S extends ZodType>(request: NextRequest, schema: S): ZodOutput<S> {
   const params: Record<string, string> = {};
   request.nextUrl.searchParams.forEach((value, key) => {
     params[key] = value;

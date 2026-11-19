@@ -2,15 +2,20 @@
 
 import { useState, type ReactNode } from 'react';
 import { useRouter } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Calculator, Equal, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useSession } from '@/lib/auth/session';
-import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency, type ShareOffering } from '@/lib/db/types';
+import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency } from '@/lib/db/types';
 import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct, offeringMath } from '@/lib/domain/share-sale';
-import { projectRepository, shareOfferingRepository } from '@/lib/repositories';
+import { fieldErrorsOf, messageOf } from '@/lib/api/client';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import {
+  shareOfferingKeys,
+  shareOfferingsApi,
+  type ApiShareOffering,
+} from '@/lib/api/share-offerings';
+import { useApi, useRefresh } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
@@ -44,7 +49,7 @@ const PREMIUM_MODE_LABEL: Record<Draft['premium_mode'], string> = {
   pct: 'Percentage of NAV (%)',
 };
 
-function fromOffering(o: ShareOffering | undefined, projectId: string | null): Draft {
+function fromOffering(o: ApiShareOffering | undefined, projectId: string | null): Draft {
   const today = todayLocal();
   return {
     project_id: o?.project_id ?? projectId ?? '',
@@ -89,20 +94,44 @@ function Row({ label, children, strong }: { label: ReactNode; children: ReactNod
  * The summary on the right works the price out as the numbers are typed;
  * the buttons sit under the form, as on the other forms (feedback A4).
  */
-export function OfferingForm({ offering, projectId }: { offering?: ShareOffering; projectId?: string | null }) {
+export function OfferingForm({
+  offering,
+  projectId,
+}: {
+  offering?: ApiShareOffering;
+  projectId?: string | null;
+}) {
   const router = useRouter();
-  const { userId } = useSession();
+  const refresh = useRefresh([shareOfferingKeys.all]);
   const [d, setD] = useState<Draft>(() => fromOffering(offering, projectId ?? null));
   const [error, setError] = useState('');
+  const [fields, setFields] = useState<Record<string, string>>({});
   const [busy, setBusy] = useState(false);
   // an error belongs to the numbers it was about; editing any of them clears it
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => {
     setD((x) => ({ ...x, [k]: v }));
     setError('');
+    setFields({});
   };
 
-  const projects = useLiveQuery(() => projectRepository.list(), []);
-  const free = useLiveQuery(() => (d.project_id ? shareOfferingRepository.freePct(d.project_id, offering?.id) : Promise.resolve(100)), [d.project_id, offering?.id]);
+  /*
+   * Only projects that are selling can carry a round — the same rule the
+   * service enforces, shown here as a shorter list rather than as a refusal
+   * after the form was filled in.
+   */
+  const projectQuery = { sales_status: 'open', page_size: 200 } as const;
+  const projects = useApi(projectKeys.list(projectQuery), (signal) =>
+    projectsApi.list(projectQuery, signal),
+  );
+  /*
+   * How much of the project is still free is the server's answer: it counts
+   * the project's other rounds, including what its closed ones actually sold.
+   */
+  const free = useApi(
+    shareOfferingKeys.free(d.project_id, offering?.id),
+    (signal) => shareOfferingsApi.freePct(d.project_id, offering?.id, signal),
+    { enabled: Boolean(d.project_id) },
+  );
 
   const nav = Number(d.net_asset_value) || 0;
   const premium = d.premium_mode === 'pct' ? Math.round((nav * (Number(d.premium_pct) || 0)) / 100) : Number(d.premium_value) || 0;
@@ -129,9 +158,7 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
     setBusy(true);
     setError('');
     try {
-      const saved = await shareOfferingRepository.save(
-        {
-          id: offering?.id,
+      const payload = {
           project_id: d.project_id,
           net_asset_value: nav,
           premium_value: premium,
@@ -150,12 +177,18 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
           grace_days: Number(d.grace_days),
           hold_days: Number(d.hold_days),
           notes: d.notes,
-        },
-        userId,
-      );
+      };
+
+      const saved = offering
+        ? await shareOfferingsApi.update(offering.id, payload)
+        : await shareOfferingsApi.create(payload);
+
+      await refresh();
       router.push(`/admin/share-sale/offerings/${saved.id}`);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save.');
+      // the server names the term it refused, so it lands on that field
+      setFields(fieldErrorsOf(e));
+      setError(messageOf(e));
       setBusy(false);
     }
   }
@@ -187,7 +220,7 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
             */}
             <Field
               label="Net asset value (NAV)"
-              required
+              required error={fields.net_asset_value}
               hint="What the project’s land, building and other assets are worth, less what it owes."
             >
               <MoneyInput value={d.net_asset_value} onChange={(e) => set('net_asset_value', e.target.value)} placeholder="e.g. 900000000" />
@@ -229,22 +262,22 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
             subtitle={d.project_id && free !== undefined ? `${formatSharePct(free)} of ${project?.name ?? 'this project'} is still free to offer.` : 'What part of the project goes on sale, split into how many shares, for how long.'}
           />
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="% of project offered" required hint={free !== undefined && d.project_id ? `Up to ${formatSharePct(free)}` : undefined}>
+            <Field label="% of project offered" required error={fields.offered_pct} hint={free !== undefined && d.project_id ? `Up to ${formatSharePct(free)}` : undefined}>
               <TextInput type="number" min="0" max="100" step="0.01" value={d.offered_pct} onChange={(e) => set('offered_pct', e.target.value)} placeholder="e.g. 50" />
             </Field>
-            <Field label="Number of shares" required hint={m.share_pct > 0 ? `${formatSharePct(m.share_pct)} ownership each` : undefined}>
+            <Field label="Number of shares" required error={fields.total_shares} hint={m.share_pct > 0 ? `${formatSharePct(m.share_pct)} ownership each` : undefined}>
               <TextInput type="number" min="1" step="1" value={d.total_shares} onChange={(e) => set('total_shares', e.target.value)} placeholder="e.g. 500" />
             </Field>
-            <Field label="Offer closes on" required hint={openDays ? `Open ${openDays} days if opened today` : 'Pick a day after today'}>
+            <Field label="Offer closes on" required error={fields.closes_on} hint={openDays ? `Open ${openDays} days if opened today` : 'Pick a day after today'}>
               <TextInput type="date" value={d.closes_on} min={addDays(today, 1)} max={addDays(today, 364)} onChange={(e) => set('closes_on', e.target.value)} />
             </Field>
-            <Field label="Minimum shares per customer" required>
+            <Field label="Minimum shares per customer" required error={fields.min_shares}>
               <TextInput type="number" min="1" step="1" value={d.min_shares} onChange={(e) => set('min_shares', e.target.value)} />
             </Field>
-            <Field label="Maximum shares per customer" required hint={maxShares > 0 && m.share_pct > 0 ? `${formatSharePct(maxShares * m.share_pct)} at most` : undefined}>
+            <Field label="Maximum shares per customer" required error={fields.max_shares} hint={maxShares > 0 && m.share_pct > 0 ? `${formatSharePct(maxShares * m.share_pct)} at most` : undefined}>
               <TextInput type="number" min="1" step="1" value={d.max_shares} onChange={(e) => set('max_shares', e.target.value)} placeholder="e.g. 25" />
             </Field>
-            <Field label="Hold reserved shares (days)" required hint="Until the agreement is signed">
+            <Field label="Hold reserved shares (days)" required error={fields.hold_days} hint="Until the agreement is signed">
               <TextInput type="number" min="1" max="60" step="1" value={d.hold_days} onChange={(e) => set('hold_days', e.target.value)} />
             </Field>
           </div>
@@ -253,10 +286,10 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
         <Card>
           <CardHeader title="3. Payment plan limits" subtitle="The most a buyer may spread the price over. Each agreement can choose fewer installments or a bigger down payment." />
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="Minimum down payment (%)" required>
+            <Field label="Minimum down payment (%)" required error={fields.min_down_payment_pct}>
               <TextInput type="number" min="0" max="100" step="1" value={d.min_down_payment_pct} onChange={(e) => set('min_down_payment_pct', e.target.value)} />
             </Field>
-            <Field label="Maximum installments" required hint="After the down payment; 0 = full price at signing">
+            <Field label="Maximum installments" required error={fields.max_installments} hint="After the down payment; 0 = full price at signing">
               <TextInput type="number" min="0" max="120" step="1" value={d.max_installments} onChange={(e) => set('max_installments', e.target.value)} />
             </Field>
             <Field label="Installment frequency" required>
@@ -278,15 +311,15 @@ export function OfferingForm({ offering, projectId }: { offering?: ShareOffering
               </SelectInput>
             </Field>
             {d.late_fee_type === 'fixed_once' ? (
-              <Field label="Late fee (BDT)" required hint="0 = no late fee">
+              <Field label="Late fee (BDT)" required error={fields.late_fee_amount} hint="0 = no late fee">
                 <MoneyInput value={d.late_fee_amount} onChange={(e) => set('late_fee_amount', e.target.value)} placeholder="e.g. 2000" />
               </Field>
             ) : (
-              <Field label="Late fee (% of the installment)" required hint="0 = no late fee">
+              <Field label="Late fee (% of the installment)" required error={fields.late_fee_pct} hint="0 = no late fee">
                 <TextInput type="number" min="0" max="25" step="0.5" value={d.late_fee_pct} onChange={(e) => set('late_fee_pct', e.target.value)} />
               </Field>
             )}
-            <Field label="Grace days before the late fee" required>
+            <Field label="Grace days before the late fee" required error={fields.grace_days}>
               <TextInput type="number" min="0" step="1" value={d.grace_days} onChange={(e) => set('grace_days', e.target.value)} />
             </Field>
             <Field label="Notes" className="md:col-span-3">

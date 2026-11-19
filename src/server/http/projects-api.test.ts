@@ -44,6 +44,7 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 
 suite('projects API', () => {
   let db: TestDb;
+  let hash = '';
   let token: string;
   let viewerToken: string;
   let managerId: string;
@@ -60,6 +61,8 @@ suite('projects API', () => {
 
   beforeEach(async () => {
     db ??= testDb();
+    // argon2 is slow on purpose; one hash is enough for every fixture user
+    hash ||= await hashPassword('nokshi-green-2026');
     await resetDb(db);
     clearPermissionCache();
 
@@ -92,7 +95,7 @@ suite('projects API', () => {
       data: {
         name: 'Mahfuz Owner',
         phone: '01711000001',
-        password_hash: await hashPassword('nokshi-green-2026'),
+        password_hash: hash,
         role_code: 'super_admin',
       },
     });
@@ -101,7 +104,7 @@ suite('projects API', () => {
       data: {
         name: 'Accounts Clerk',
         phone: '01711000002',
-        password_hash: await hashPassword('nokshi-green-2026'),
+        password_hash: hash,
         role_code: 'accounts',
       },
     });

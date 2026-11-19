@@ -13,5 +13,12 @@ export default defineConfig({
      */
     poolOptions: { forks: { singleFork: true } },
     testTimeout: 30_000,
+    /*
+     * The database suites set their fixtures up in `beforeEach`, and argon2 is
+     * deliberately slow (64 MiB, three passes): two password hashes and two
+     * sign-ins pass vitest's 10-second hook default on a loaded machine, which
+     * showed up as a test that failed only when the whole suite ran.
+     */
+    hookTimeout: 30_000,
   },
 });

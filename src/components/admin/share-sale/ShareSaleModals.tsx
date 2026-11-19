@@ -20,7 +20,13 @@ import {
   maxSharePayable,
   type SaleView,
 } from '@/lib/domain/share-sale';
-import { customerRepository, orgMemberRepository, shareOfferingRepository, shareSaleRepository } from '@/lib/repositories';
+import {
+  shareOfferingKeys,
+  shareOfferingsApi,
+  type ApiShareOffering,
+} from '@/lib/api/share-offerings';
+import { useRefresh } from '@/lib/api/use-api';
+import { customerRepository, orgMemberRepository, shareSaleRepository } from '@/lib/repositories';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
 export function ErrorNote({ error }: { error: string }) {
@@ -328,7 +334,8 @@ export function ReasonModal({ sale, kind, onClose }: { sale: ShareSale; kind: 'r
 }
 
 /** Opens a draft from a chosen day until its close date — the one planned on the draft, which can still change here. */
-export function OpenOfferingModal({ offering, onClose }: { offering: ShareOffering; onClose: () => void }) {
+export function OpenOfferingModal({ offering, onClose }: { offering: ApiShareOffering; onClose: () => void }) {
+  const refresh = useRefresh([shareOfferingKeys.all]);
   const today = todayLocal();
   const [date, setDate] = useState(today);
   const [closes, setCloses] = useState(offering.closes_on && offering.closes_on >= today ? offering.closes_on : closesOn(today, offering.validity_days));
@@ -347,7 +354,12 @@ export function OpenOfferingModal({ offering, onClose }: { offering: ShareOfferi
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={busy || !days} onClick={() => run(() => shareOfferingRepository.open(offering.id, date, closes), onClose)}>
+          <Button disabled={busy || !days} onClick={() =>
+              run(async () => {
+                await shareOfferingsApi.open(offering.id, { opens_on: date, closes_on: closes });
+                await refresh();
+              }, onClose)
+            }>
             Open for sale
           </Button>
         </>
@@ -367,7 +379,8 @@ export function OpenOfferingModal({ offering, onClose }: { offering: ShareOfferi
   );
 }
 
-export function ExtendOfferingModal({ offering, onClose }: { offering: ShareOffering; onClose: () => void }) {
+export function ExtendOfferingModal({ offering, onClose }: { offering: ApiShareOffering; onClose: () => void }) {
+  const refresh = useRefresh([shareOfferingKeys.all]);
   const [days, setDays] = useState('30');
   const { error, busy, run } = useAction();
   return (
@@ -383,7 +396,12 @@ export function ExtendOfferingModal({ offering, onClose }: { offering: ShareOffe
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={busy} onClick={() => run(() => shareOfferingRepository.extend(offering.id, Number(days)), onClose)}>
+          <Button disabled={busy} onClick={() =>
+              run(async () => {
+                await shareOfferingsApi.extend(offering.id, Number(days));
+                await refresh();
+              }, onClose)
+            }>
             Extend
           </Button>
         </>
