@@ -32,6 +32,12 @@ const TABLE_OF: Record<string, string> = {
   UserProjectAssignment: 'user_project_assignments',
   Document: 'documents',
   Project: 'projects',
+  Customer: 'customers',
+  ShareOffering: 'share_offerings',
+  ShareSale: 'share_sales',
+  ShareInstallment: 'share_installments',
+  SharePayment: 'share_payments',
+  SharePaymentAllocation: 'share_payment_allocations',
 };
 
 type Json = Prisma.InputJsonValue;

@@ -25,9 +25,11 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-/* ------------------------------------------------------------------ *
+/**
+ * ------------------------------------------------------------------ *
  * Reference data and company settings
- * ------------------------------------------------------------------ */
+ * ------------------------------------------------------------------
+ */
 
 /// Every option list the client edits themselves: amenities, income and
 /// expense heads, designations, document types. Statuses are NOT here — they
@@ -57,42 +59,44 @@ model LookupValue {
 /// One row. The company's own details, as they appear on documents and the
 /// public site.
 model CompanySettings {
-  id                      String   @id @default(uuid(7)) @db.Uuid
-  company_name            String   @db.VarChar(200)
-  legal_name              String?  @db.VarChar(200)
-  tagline                 String?  @db.VarChar(300)
-  about                   String?
-  phone                   String?  @db.VarChar(40)
-  alt_phone               String?  @db.VarChar(40)
-  email                   String?  @db.VarChar(200)
-  website                 String?  @db.VarChar(200)
-  address                 String?
-  tax_id                  String?  @db.VarChar(60)
-  trade_licence_no        String?  @db.VarChar(60)
-  rehab_member_no         String?  @db.VarChar(60)
-  established_year        Int?
+  id                     String   @id @default(uuid(7)) @db.Uuid
+  company_name           String   @db.VarChar(200)
+  legal_name             String?  @db.VarChar(200)
+  tagline                String?  @db.VarChar(300)
+  about                  String?
+  phone                  String?  @db.VarChar(40)
+  alt_phone              String?  @db.VarChar(40)
+  email                  String?  @db.VarChar(200)
+  website                String?  @db.VarChar(200)
+  address                String?
+  tax_id                 String?  @db.VarChar(60)
+  trade_licence_no       String?  @db.VarChar(60)
+  rehab_member_no        String?  @db.VarChar(60)
+  established_year       Int?
   /// letterhead and logo for generated documents
-  logo_document_id        String?  @db.Uuid
-  letterhead_document_id  String?  @db.Uuid
-  facebook_url            String?  @db.VarChar(300)
-  youtube_url             String?  @db.VarChar(300)
-  instagram_url           String?  @db.VarChar(300)
-  linkedin_url            String?  @db.VarChar(300)
+  logo_document_id       String?  @db.Uuid
+  letterhead_document_id String?  @db.Uuid
+  facebook_url           String?  @db.VarChar(300)
+  youtube_url            String?  @db.VarChar(300)
+  instagram_url          String?  @db.VarChar(300)
+  linkedin_url           String?  @db.VarChar(300)
   /// public website switches
-  public_show_prices      Boolean  @default(true)
-  public_show_share_sale  Boolean  @default(false)
-  default_currency        String   @default("BDT") @db.VarChar(8)
-  notes                   String?
-  created_at              DateTime @default(now()) @db.Timestamptz
-  updated_at              DateTime @updatedAt @db.Timestamptz
-  created_by              String?  @db.Uuid
+  public_show_prices     Boolean  @default(true)
+  public_show_share_sale Boolean  @default(false)
+  default_currency       String   @default("BDT") @db.VarChar(8)
+  notes                  String?
+  created_at             DateTime @default(now()) @db.Timestamptz
+  updated_at             DateTime @updatedAt @db.Timestamptz
+  created_by             String?  @db.Uuid
 
   @@map("company_settings")
 }
 
-/* ------------------------------------------------------------------ *
+/**
+ * ------------------------------------------------------------------ *
  * People, access and sessions
- * ------------------------------------------------------------------ */
+ * ------------------------------------------------------------------
+ */
 
 enum UserStatus {
   active
@@ -139,25 +143,25 @@ model RolePermission {
 
 /// Staff who sign in to the Admin Portal.
 model User {
-  id            String     @id @default(uuid(7)) @db.Uuid
-  name          String     @db.VarChar(200)
-  phone         String     @unique @db.VarChar(20)
-  email         String?    @unique @db.VarChar(200)
+  id                   String     @id @default(uuid(7)) @db.Uuid
+  name                 String     @db.VarChar(200)
+  phone                String     @unique @db.VarChar(20)
+  email                String?    @unique @db.VarChar(200)
   /// argon2id. Null until the person sets one from their invitation.
-  password_hash String?
-  must_change_password Boolean @default(false)
-  role_code     String     @db.VarChar(64)
-  status        UserStatus @default(active)
-  last_login_at DateTime?  @db.Timestamptz
-  created_at    DateTime   @default(now()) @db.Timestamptz
-  updated_at    DateTime   @updatedAt @db.Timestamptz
-  created_by    String?    @db.Uuid
-  deleted_at    DateTime?  @db.Timestamptz
+  password_hash        String?
+  must_change_password Boolean    @default(false)
+  role_code            String     @db.VarChar(64)
+  status               UserStatus @default(active)
+  last_login_at        DateTime?  @db.Timestamptz
+  created_at           DateTime   @default(now()) @db.Timestamptz
+  updated_at           DateTime   @updatedAt @db.Timestamptz
+  created_by           String?    @db.Uuid
+  deleted_at           DateTime?  @db.Timestamptz
 
-  role        Role                    @relation(fields: [role_code], references: [code])
-  projects    UserProjectAssignment[]
-  sessions    Session[]
-  managed     Project[]               @relation("project_manager")
+  role     Role                    @relation(fields: [role_code], references: [code])
+  projects UserProjectAssignment[]
+  sessions Session[]
+  managed  Project[]               @relation("project_manager")
 
   @@index([status])
   @@map("users")
@@ -190,20 +194,20 @@ enum SessionKind {
 /// leaked database row cannot be replayed as a session; revocation is a single
 /// UPDATE, which is why this is not a JWT.
 model Session {
-  id          String      @id @default(uuid(7)) @db.Uuid
-  kind        SessionKind
-  user_id     String?     @db.Uuid
-  customer_id String?     @db.Uuid
-  token_hash  String      @unique
+  id           String      @id @default(uuid(7)) @db.Uuid
+  kind         SessionKind
+  user_id      String?     @db.Uuid
+  customer_id  String?     @db.Uuid
+  token_hash   String      @unique
   /// what the person is signing in from, for "sign out my lost phone"
-  device      String?     @db.VarChar(200)
-  ip          String?     @db.VarChar(64)
-  expires_at  DateTime    @db.Timestamptz
-  revoked_at  DateTime?   @db.Timestamptz
-  last_seen_at DateTime?  @db.Timestamptz
-  created_at  DateTime    @default(now()) @db.Timestamptz
-  updated_at  DateTime    @updatedAt @db.Timestamptz
-  created_by  String?     @db.Uuid
+  device       String?     @db.VarChar(200)
+  ip           String?     @db.VarChar(64)
+  expires_at   DateTime    @db.Timestamptz
+  revoked_at   DateTime?   @db.Timestamptz
+  last_seen_at DateTime?   @db.Timestamptz
+  created_at   DateTime    @default(now()) @db.Timestamptz
+  updated_at   DateTime    @updatedAt @db.Timestamptz
+  created_by   String?     @db.Uuid
 
   user User? @relation(fields: [user_id], references: [id], onDelete: Cascade)
 
@@ -215,18 +219,18 @@ model Session {
 
 /// A one-time code sent to a mobile number. Hashed, short-lived, attempt-capped.
 model OtpCode {
-  id           String    @id @default(uuid(7)) @db.Uuid
-  phone        String    @db.VarChar(20)
-  code_hash    String
+  id          String    @id @default(uuid(7)) @db.Uuid
+  phone       String    @db.VarChar(20)
+  code_hash   String
   /// what signing in with this code is for
-  purpose      String    @db.VarChar(32)
-  expires_at   DateTime  @db.Timestamptz
-  attempts     Int       @default(0)
-  consumed_at  DateTime? @db.Timestamptz
-  ip           String?   @db.VarChar(64)
-  created_at   DateTime  @default(now()) @db.Timestamptz
-  updated_at   DateTime  @updatedAt @db.Timestamptz
-  created_by   String?   @db.Uuid
+  purpose     String    @db.VarChar(32)
+  expires_at  DateTime  @db.Timestamptz
+  attempts    Int       @default(0)
+  consumed_at DateTime? @db.Timestamptz
+  ip          String?   @db.VarChar(64)
+  created_at  DateTime  @default(now()) @db.Timestamptz
+  updated_at  DateTime  @updatedAt @db.Timestamptz
+  created_by  String?   @db.Uuid
 
   @@index([phone, created_at])
   @@index([expires_at])
@@ -251,9 +255,11 @@ model AuthAttempt {
   @@map("auth_attempts")
 }
 
-/* ------------------------------------------------------------------ *
+/**
+ * ------------------------------------------------------------------ *
  * Audit trail and display-code numbering
- * ------------------------------------------------------------------ */
+ * ------------------------------------------------------------------
+ */
 
 enum AuditAction {
   create
@@ -270,22 +276,22 @@ enum AuditAction {
 /// the change itself, so no service can forget it. The application's database
 /// role has INSERT and SELECT here and nothing else.
 model AuditLog {
-  id          String      @id @default(uuid(7)) @db.Uuid
-  at          DateTime    @default(now()) @db.Timestamptz
-  action      AuditAction
+  id                String      @id @default(uuid(7)) @db.Uuid
+  at                DateTime    @default(now()) @db.Timestamptz
+  action            AuditAction
   /// who did it: a staff user, a customer, or neither for a system job
-  actor_user_id     String? @db.Uuid
-  actor_customer_id String? @db.Uuid
-  actor_role        String? @db.VarChar(64)
-  table_name  String      @db.VarChar(64)
-  record_id   String?     @db.Uuid
+  actor_user_id     String?     @db.Uuid
+  actor_customer_id String?     @db.Uuid
+  actor_role        String?     @db.VarChar(64)
+  table_name        String      @db.VarChar(64)
+  record_id         String?     @db.Uuid
   /// the record's display code, so a deleted row is still recognisable
-  record_code String?     @db.VarChar(40)
-  before      Json?
-  after       Json?
-  ip          String?     @db.VarChar(64)
-  user_agent  String?     @db.VarChar(300)
-  request_id  String?     @db.VarChar(64)
+  record_code       String?     @db.VarChar(40)
+  before            Json?
+  after             Json?
+  ip                String?     @db.VarChar(64)
+  user_agent        String?     @db.VarChar(300)
+  request_id        String?     @db.VarChar(64)
 
   @@index([table_name, record_id])
   @@index([actor_user_id, at])
@@ -316,9 +322,11 @@ model CodeSeries {
   @@map("code_series")
 }
 
-/* ------------------------------------------------------------------ *
+/**
+ * ------------------------------------------------------------------ *
  * Documents
- * ------------------------------------------------------------------ */
+ * ------------------------------------------------------------------
+ */
 
 /// A file against any record. The bytes live in object storage (S3/R2 in
 /// production, a local folder in development) behind `server/storage`; this row
@@ -353,9 +361,11 @@ model Document {
   @@map("documents")
 }
 
-/* ------------------------------------------------------------------ *
+/**
+ * ------------------------------------------------------------------ *
  * Projects
- * ------------------------------------------------------------------ */
+ * ------------------------------------------------------------------
+ */
 
 enum ProjectType {
   land_share
@@ -402,44 +412,393 @@ enum ConstructionAfterSale {
 /// earns, and its papers. Land, towers, units and the JV allocation belong to
 /// the modules this product does not carry (AGENTS.md).
 model Project {
-  id                     String                 @id @default(uuid(7)) @db.Uuid
-  code                   String                 @unique @db.VarChar(40)
-  name                   String                 @db.VarChar(200)
-  project_type           ProjectType            @default(land_share)
-  status                 ProjectStatus          @default(planning)
-  sales_status           ProjectSalesStatus     @default(not_open)
+  id                          String                @id @default(uuid(7)) @db.Uuid
+  code                        String                @unique @db.VarChar(40)
+  name                        String                @db.VarChar(200)
+  project_type                ProjectType           @default(land_share)
+  status                      ProjectStatus         @default(planning)
+  sales_status                ProjectSalesStatus    @default(not_open)
   /// a fact typed on the project in Phase 1; a link to the Land module in Phase 2
-  total_land_area        Decimal?               @db.Decimal(14, 2)
-  total_land_area_unit   LandSizeUnit?
+  total_land_area             Decimal?              @db.Decimal(14, 2)
+  total_land_area_unit        LandSizeUnit?
   /// the marketing address the public site shows, not a cadastral one
-  location_summary       String?                @db.VarChar(300)
-  expected_start_date    DateTime?              @db.Date
-  expected_completion_date DateTime?            @db.Date
-  project_manager_id     String?                @db.Uuid
-  architect              String?                @db.VarChar(200)
-  surroundings           String?
+  location_summary            String?               @db.VarChar(300)
+  expected_start_date         DateTime?             @db.Date
+  expected_completion_date    DateTime?             @db.Date
+  project_manager_id          String?               @db.Uuid
+  architect                   String?               @db.VarChar(200)
+  surroundings                String?
   /// multi-select from lookup_values (category='amenity')
-  amenities              String[]               @default([])
+  amenities                   String[]              @default([])
   /// an externally hosted display picture; an uploaded one is a Document
-  cover_image_url        String?                @db.VarChar(400)
-  cover_image_document_id String?               @db.Uuid
-  construction_after_sale ConstructionAfterSale @default(undecided)
+  cover_image_url             String?               @db.VarChar(400)
+  cover_image_document_id     String?               @db.Uuid
+  construction_after_sale     ConstructionAfterSale @default(undecided)
   /// the late fee a new share agreement on this project starts from
-  default_late_fee_pct   Decimal?               @db.Decimal(6, 3)
+  default_late_fee_pct        Decimal?              @db.Decimal(6, 3)
   default_late_fee_grace_days Int?
-  is_public              Boolean                @default(false)
-  is_featured            Boolean                @default(false)
-  created_at             DateTime               @default(now()) @db.Timestamptz
-  updated_at             DateTime               @updatedAt @db.Timestamptz
-  created_by             String?                @db.Uuid
-  deleted_at             DateTime?              @db.Timestamptz
+  is_public                   Boolean               @default(false)
+  is_featured                 Boolean               @default(false)
+  created_at                  DateTime              @default(now()) @db.Timestamptz
+  updated_at                  DateTime              @updatedAt @db.Timestamptz
+  created_by                  String?               @db.Uuid
+  deleted_at                  DateTime?             @db.Timestamptz
 
   manager     User?                   @relation("project_manager", fields: [project_manager_id], references: [id])
   assignments UserProjectAssignment[]
+  offerings   ShareOffering[]
+  share_sales ShareSale[]
 
   @@index([status])
   @@index([sales_status])
   @@index([is_public, is_featured])
   @@index([created_at])
   @@map("projects")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * Share sale (S2) — PROJECT-SHARE-SALE-PLAN.md
+ * The money half of this product: a project is valued, a round of shares is
+ * offered, a customer reserves some, an agreement fixes the schedule, and the
+ * payments come in against it.
+ * Field names are the ones the interim Dexie layer already used, so the
+ * screens and `src/lib/domain/share-sale.ts` read the same thing after the
+ * move as before it (AGENTS.md). What changes is where the rules live and
+ * what the types are: money is Decimal(18,2), a share percentage is
+ * Decimal(9,6), and nothing is summed in JavaScript floats.
+ * ------------------------------------------------------------------
+ */
+
+enum CustomerType {
+  /// buys a flat or a plot — Phase 2
+  buyer
+  /// buys shares in a project: this product's customer
+  investor
+}
+
+/// A person or company on the platform. One customer, many purchases, across
+/// projects (plan §4 step 9), so nothing about a purchase lives here.
+model Customer {
+  id            String       @id @default(uuid(7)) @db.Uuid
+  code          String       @unique @db.VarChar(40)
+  name          String       @db.VarChar(200)
+  /// the same dedup idea as leads: one person, one record
+  phone         String       @unique @db.VarChar(20)
+  email         String?      @db.VarChar(200)
+  customer_type CustomerType @default(investor)
+  /// which lead this customer was converted from, for traceability
+  lead_id       String?      @db.Uuid
+
+  /// KYC as the agreement names a person (plan §4a). All optional: the portal
+  /// shows "not on file" for whatever the office has not filled in.
+  nid                   String?   @db.VarChar(40)
+  tin                   String?   @db.VarChar(40)
+  date_of_birth         DateTime? @db.Date
+  father_or_spouse_name String?   @db.VarChar(200)
+  profession            String?   @db.VarChar(120)
+  address               String?
+  permanent_address     String?
+  kyc_verified_on       DateTime? @db.Date
+
+  /// the nominee named on the agreement
+  nominee_name     String? @db.VarChar(200)
+  nominee_relation String? @db.VarChar(80)
+  nominee_phone    String? @db.VarChar(20)
+  nominee_nid      String? @db.VarChar(40)
+
+  /// where a profit payout or a refund is sent
+  bank_name    String? @db.VarChar(160)
+  bank_branch  String? @db.VarChar(160)
+  bank_account String? @db.VarChar(60)
+
+  /// the Customer Portal sign-in, once the invitation has been accepted
+  password_hash        String?
+  must_change_password Boolean   @default(false)
+  last_login_at        DateTime? @db.Timestamptz
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  sales ShareSale[]
+
+  @@index([name])
+  @@index([created_at])
+  @@map("customers")
+}
+
+enum ShareOfferingStatus {
+  draft
+  open
+  closed
+  cancelled
+}
+
+enum ShareFrequency {
+  monthly
+  quarterly
+}
+
+/// How an offering charges a late installment (SHARE-SALE-FEEDBACK-PLAN.md A3).
+enum LateFeeType {
+  /// a percentage of the overdue installment, charged once
+  pct_once
+  /// a fixed taka amount, charged once
+  fixed_once
+}
+
+/// One round of shares in one project (plan §4 step 2).
+///
+/// The valuation is kept on the round, with its date, rather than on the
+/// project: a project revalued between rounds must not rewrite what the first
+/// round's buyers agreed to. `share_pct` and `price_per_share` are stored, not
+/// derived on read, for the same reason.
+model ShareOffering {
+  id         String @id @default(uuid(7)) @db.Uuid
+  code       String @unique @db.VarChar(40)
+  project_id String @db.Uuid
+  /// 1 for the project's first offering, then 2, 3…
+  round_no   Int
+
+  /// valuation = net asset value + premium: the worth of 100% of the project
+  net_asset_value Decimal  @db.Decimal(18, 2)
+  premium_value   Decimal  @default(0) @db.Decimal(18, 2)
+  valuation       Decimal  @db.Decimal(18, 2)
+  valuation_date  DateTime @db.Date
+
+  /// % of the whole project offered in this round
+  offered_pct     Decimal @db.Decimal(9, 6)
+  total_shares    Int
+  /// what one share owns, in % — offered_pct divided by total_shares
+  share_pct       Decimal @db.Decimal(9, 6)
+  /// valuation times share_pct, to the taka
+  price_per_share Decimal @db.Decimal(18, 2)
+
+  /// how many days the round stays open once opened
+  validity_days Int       @default(120)
+  opens_on      DateTime? @db.Date
+  /// planned while a draft; fixed when the round is opened
+  closes_on     DateTime? @db.Date
+
+  /// per customer
+  min_shares            Int            @default(1)
+  max_shares            Int?
+  /// the least down payment accepted, % of the price
+  min_down_payment_pct  Decimal        @default(0) @db.Decimal(6, 3)
+  /// the longest plan offered; an agreement may choose fewer
+  max_installments      Int            @default(0)
+  installment_frequency ShareFrequency @default(monthly)
+
+  late_fee_type   LateFeeType @default(pct_once)
+  /// with pct_once: % of the overdue installment
+  late_fee_pct    Decimal     @default(0) @db.Decimal(6, 3)
+  /// with fixed_once: the taka charged once on each late installment
+  late_fee_amount Decimal?    @db.Decimal(18, 2)
+  grace_days      Int         @default(0)
+  /// how long reserved shares are held before the agreement is signed
+  hold_days       Int         @default(7)
+
+  status ShareOfferingStatus @default(draft)
+  notes  String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project Project     @relation(fields: [project_id], references: [id])
+  sales   ShareSale[]
+
+  @@unique([project_id, round_no])
+  @@index([project_id, status])
+  @@index([status])
+  @@map("share_offerings")
+}
+
+/// Stored stages of one purchase (plan §6). "Paying" and "overdue" are read
+/// off the schedule rather than stored, so no job has to keep them true.
+enum ShareSaleStatus {
+  /// shares held for this customer while the agreement is prepared
+  reserved
+  agreement_signed
+  fully_paid
+  /// the hold lapsed; the shares went back to the round
+  released
+  cancelled
+}
+
+/// One customer's purchase in one round.
+model ShareSale {
+  id          String @id @default(uuid(7)) @db.Uuid
+  code        String @unique @db.VarChar(40)
+  offering_id String @db.Uuid
+  /// denormalised from the offering: every money report is per project, and a
+  /// purchase can never move to another one
+  project_id  String @db.Uuid
+  customer_id String @db.Uuid
+
+  shares                Int
+  /// what one share owned at the time of this purchase
+  share_pct             Decimal        @db.Decimal(9, 6)
+  price_per_share       Decimal        @db.Decimal(18, 2)
+  total_price           Decimal        @db.Decimal(18, 2)
+  down_payment          Decimal        @default(0) @db.Decimal(18, 2)
+  /// after the down payment; 0 = the whole price at signing
+  installment_count     Int            @default(0)
+  installment_frequency ShareFrequency @default(monthly)
+
+  reserved_on DateTime @db.Date
+  hold_until  DateTime @db.Date
+
+  agreement_no     String?   @unique @db.VarChar(40)
+  agreement_date   DateTime? @db.Date
+  /// the first installment's due date; the rest follow by the frequency
+  first_due_date   DateTime? @db.Date
+  certificate_no   String?   @unique @db.VarChar(40)
+  certificate_date DateTime? @db.Date
+
+  status      ShareSaleStatus @default(reserved)
+  /// why it was released or cancelled
+  status_note String?
+  notes       String?
+
+  /// What the office recorded at the signing table (plan section 4a): place,
+  /// witnesses, stamp and notary. One row of the agreement's own facts, which
+  /// nothing queries across purchases — so Json, not six more tables.
+  signing    Json?
+  /// the signing as far as the office has got with it, saved at every step
+  sign_draft Json?
+
+  /// the sales organisation member who sold it (REVENUE-SHARE-PLAN.md section 6)
+  sold_by_member_id String? @db.Uuid
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  offering     ShareOffering      @relation(fields: [offering_id], references: [id])
+  project      Project            @relation(fields: [project_id], references: [id])
+  customer     Customer           @relation(fields: [customer_id], references: [id])
+  installments ShareInstallment[]
+  payments     SharePayment[]
+
+  @@index([offering_id, status])
+  @@index([project_id, status])
+  @@index([customer_id])
+  @@index([sold_by_member_id])
+  @@map("share_sales")
+}
+
+/// One row of the agreed payment schedule. `seq` 0 is the down payment.
+///
+/// Not a financial record: it is what was *agreed*, and it may be rewritten
+/// while a purchase is still being arranged. What was *paid* is a
+/// SharePayment, and that is immutable.
+model ShareInstallment {
+  id       String   @id @default(uuid(7)) @db.Uuid
+  sale_id  String   @db.Uuid
+  /// 0 = down payment, then 1, 2, 3…
+  seq      Int
+  due_date DateTime @db.Date
+  amount   Decimal  @db.Decimal(18, 2)
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  sale        ShareSale                @relation(fields: [sale_id], references: [id], onDelete: Cascade)
+  allocations SharePaymentAllocation[]
+
+  @@unique([sale_id, seq])
+  @@index([due_date])
+  @@map("share_installments")
+}
+
+enum SharePaymentMethod {
+  bank_transfer
+  cheque
+  cash
+  bkash
+  nagad
+  card
+  online
+  /// a declared profit share paid onto overdue installments; no money moves
+  profit_adjustment
+}
+
+enum SharePaymentChannel {
+  /// recorded by the office
+  office
+  /// paid by the customer through the portal's gateway
+  online
+}
+
+/// Money received against a purchase — a receipt.
+///
+/// Immutable, enforced by a trigger: no UPDATE, no DELETE, no `deleted_at`
+/// (AGENTS.md). A mistake is corrected by a reversing payment that points at
+/// the one it reverses, so the receipt book reads like a receipt book. Whether
+/// a payment has been reversed is therefore read, never stored.
+model SharePayment {
+  id      String   @id @default(uuid(7)) @db.Uuid
+  code    String   @unique @db.VarChar(40)
+  sale_id String   @db.Uuid
+  paid_on DateTime @db.Date
+
+  /// principal + late_fee; negative on a reversal
+  amount    Decimal @db.Decimal(18, 2)
+  principal Decimal @db.Decimal(18, 2)
+  late_fee  Decimal @default(0) @db.Decimal(18, 2)
+
+  method        SharePaymentMethod
+  reference     String?             @db.VarChar(120)
+  channel       SharePaymentChannel @default(office)
+  /// "bKash 01711 xxx 344", "Visa xxxx 4242": what the gateway reported
+  method_detail String?             @db.VarChar(160)
+  /// the account the money landed in, so investor money reaches Cash Position
+  account_id    String?             @db.Uuid
+  notes         String?
+
+  /// set on a reversal: the receipt being corrected
+  reverses_payment_id String? @db.Uuid
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  sale        ShareSale                @relation(fields: [sale_id], references: [id])
+  reverses    SharePayment?            @relation("payment_reversal", fields: [reverses_payment_id], references: [id])
+  reversed_by SharePayment[]           @relation("payment_reversal")
+  allocations SharePaymentAllocation[]
+
+  @@index([sale_id, paid_on])
+  @@index([paid_on])
+  @@index([account_id])
+  @@map("share_payments")
+}
+
+/// How much of one payment went onto one scheduled row.
+///
+/// A table rather than the Json array the interim layer kept, because "what is
+/// still owed on installment 4" is a question the database should answer with
+/// a SUM — not something every screen re-adds in JavaScript. Immutable with
+/// the payment it belongs to.
+model SharePaymentAllocation {
+  id             String  @id @default(uuid(7)) @db.Uuid
+  payment_id     String  @db.Uuid
+  installment_id String  @db.Uuid
+  principal      Decimal @db.Decimal(18, 2)
+  late_fee       Decimal @default(0) @db.Decimal(18, 2)
+
+  created_at DateTime @default(now()) @db.Timestamptz
+
+  payment     SharePayment     @relation(fields: [payment_id], references: [id])
+  installment ShareInstallment @relation(fields: [installment_id], references: [id])
+
+  @@index([payment_id])
+  @@index([installment_id])
+  @@map("share_payment_allocations")
 }
