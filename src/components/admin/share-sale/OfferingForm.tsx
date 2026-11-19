@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, type ReactNode } from 'react';
+import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { Calculator, Equal, Plus } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency } from '@/lib/db/types';
-import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct, offeringMath } from '@/lib/domain/share-sale';
+import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct } from '@/lib/domain/share-sale';
 import { fieldErrorsOf, messageOf } from '@/lib/api/client';
 import { projectKeys, projectsApi } from '@/lib/api/projects';
 import {
@@ -22,12 +23,10 @@ import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 /** The form's state: every number as typed, so a half-typed field is not forced into a number. */
 interface Draft {
   project_id: string;
-  net_asset_value: string;
   premium_mode: 'amount' | 'pct';
   premium_value: string;
   premium_pct: string;
-  valuation_date: string;
-  offered_pct: string;
+  /** how many of the project's shares this round offers */
   total_shares: string;
   closes_on: string;
   min_shares: string;
@@ -53,12 +52,9 @@ function fromOffering(o: ApiShareOffering | undefined, projectId: string | null)
   const today = todayLocal();
   return {
     project_id: o?.project_id ?? projectId ?? '',
-    net_asset_value: o ? String(o.net_asset_value) : '',
     premium_mode: 'amount',
     premium_value: o ? String(o.premium_value) : '',
     premium_pct: '',
-    valuation_date: o?.valuation_date ?? today,
-    offered_pct: o ? String(o.offered_pct) : '',
     total_shares: o ? String(o.total_shares) : '',
     // a draft saved before close dates keeps its day count, counted from today
     closes_on: o?.closes_on && o.closes_on > today ? o.closes_on : closesOn(today, o?.validity_days ?? 90),
@@ -115,29 +111,46 @@ export function OfferingForm({
   };
 
   /*
-   * Only projects that are selling can carry a round — the same rule the
-   * service enforces, shown here as a shorter list rather than as a refusal
-   * after the form was filled in.
+   * Every project is listed, not only the ones a round can be written
+   * against: a dropdown that silently leaves a project out looks broken.
+   * The ones that are not ready are disabled, with the reason beside them.
    */
-  const projectQuery = { sales_status: 'open', page_size: 200 } as const;
+  const projectQuery = { page_size: 200 } as const;
   const projects = useApi(projectKeys.list(projectQuery), (signal) =>
     projectsApi.list(projectQuery, signal),
   );
+  const project = (projects ?? []).find((p) => p.id === d.project_id);
   /*
-   * How much of the project is still free is the server's answer: it counts
-   * the project's other rounds, including what its closed ones actually sold.
+   * How many of the project's shares are still free is the server's answer: it
+   * counts the project's other rounds, including what its closed ones sold.
    */
-  const free = useApi(
-    shareOfferingKeys.free(d.project_id, offering?.id),
-    (signal) => shareOfferingsApi.freePct(d.project_id, offering?.id, signal),
+  const room = useApi(
+    shareOfferingKeys.room(d.project_id, offering?.id),
+    (signal) => shareOfferingsApi.room(d.project_id, offering?.id, signal),
     { enabled: Boolean(d.project_id) },
   );
 
-  const nav = Number(d.net_asset_value) || 0;
-  const premium = d.premium_mode === 'pct' ? Math.round((nav * (Number(d.premium_pct) || 0)) / 100) : Number(d.premium_value) || 0;
-  const terms = { net_asset_value: nav, premium_value: premium, offered_pct: Number(d.offered_pct) || 0, total_shares: Number(d.total_shares) || 0 };
-  const m = offeringMath(terms);
-  const shares = Math.floor(terms.total_shares);
+  /*
+   * What a share is comes from the project; this round only adds a premium.
+   * The sums are the server's, repeated here so the price moves while somebody
+   * types — `offeringMath` is not used, because the share size is not derived
+   * from a percentage any more.
+   */
+  const nav = project?.valuation ?? 0;
+  const sharePct = project?.share_pct ?? 0;
+  const premium =
+    d.premium_mode === 'pct' ? Math.round((nav * (Number(d.premium_pct) || 0)) / 100) : Number(d.premium_value) || 0;
+  const shares = Math.floor(Number(d.total_shares) || 0);
+  const m = {
+    valuation: nav + premium,
+    share_pct: sharePct,
+    price_per_share: Math.round(((nav + premium) * sharePct) / 100),
+    raise: 0,
+  };
+  m.raise = m.price_per_share * shares;
+  const offeredPct = Number((shares * sharePct).toFixed(6));
+  const free = room?.free ?? null;
+  const ready = Boolean(project?.valuation && project?.total_shares);
   const maxShares = Number(d.max_shares) || 0;
   const n = Number(d.max_installments) || 0;
   const downPct = Number(d.min_down_payment_pct) || 0;
@@ -160,11 +173,8 @@ export function OfferingForm({
     try {
       const payload = {
           project_id: d.project_id,
-          net_asset_value: nav,
           premium_value: premium,
-          valuation_date: d.valuation_date,
-          offered_pct: terms.offered_pct,
-          total_shares: Number(d.total_shares),
+          total_shares: shares,
           closes_on: d.closes_on,
           min_shares: Number(d.min_shares),
           max_shares: Number(d.max_shares),
@@ -193,41 +203,87 @@ export function OfferingForm({
     }
   }
 
-  const project = (projects ?? []).find((p) => p.id === d.project_id);
-
   return (
     <div className="grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_380px]">
       <div className="space-y-5">
         <Card>
-          <CardHeader title="1. Project valuation" subtitle="Valuation = net asset value + premium. It is the value of 100% of the project for this offering." />
+          <CardHeader
+            title="1. Project valuation"
+            subtitle="What the project is worth and how many shares it is divided into are the project's own, set on its Valuation tab. A round may add a premium on top."
+          />
           <div className="grid gap-4 md:grid-cols-2">
-            <Field label="Project" required className="md:col-span-2">
-              <SelectInput value={d.project_id} onChange={(e) => set('project_id', e.target.value)} disabled={!!offering}>
+            <Field label="Project" required error={fields.project_id} className="md:col-span-2">
+              <SelectInput
+                value={d.project_id}
+                onChange={(e) => set('project_id', e.target.value)}
+                disabled={!!offering}
+              >
                 <option value="">Choose a project…</option>
-                {(projects ?? []).map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name} · {p.code}
-                  </option>
-                ))}
+                {(projects ?? []).map((p) => {
+                  const why =
+                    p.sales_status === 'not_open'
+                      ? 'sales not open'
+                      : !p.valuation || !p.total_shares
+                        ? 'no valuation yet'
+                        : p.shares_free === 0
+                          ? 'every share is in a round'
+                          : null;
+                  return (
+                    <option key={p.id} value={p.id} disabled={Boolean(why) && p.id !== d.project_id}>
+                      {p.name} · {p.code}
+                      {why ? ` — ${why}` : ''}
+                    </option>
+                  );
+                })}
               </SelectInput>
             </Field>
-            {/*
-              The prototype offered "book cost to date" from the construction
-              cost sheet as a starting point for NAV. This build records no
-              construction cost, and a project's running cost is not what it is
-              worth, so the valuation is typed — it is a judgement the owner
-              makes, not a number the system can infer.
-            */}
+
+            {project && !ready && (
+              <p className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+                {project.sales_status === 'not_open'
+                  ? 'This project is not selling yet. Open its sales on the project page first.'
+                  : 'This project has no valuation yet.'}{' '}
+                <Link
+                  href={`/admin/projects/${project.id}`}
+                  className="font-medium underline underline-offset-2"
+                >
+                  Open {project.name}
+                </Link>
+              </p>
+            )}
+
+            {project && ready && (
+              <div className="md:col-span-2 rounded-xl border border-hairline bg-slate-50/60 px-4 py-3">
+                <Row label="Project valuation (100%)" strong>
+                  {formatBdt(project.valuation ?? 0)}
+                </Row>
+                <Row label="Divided into">
+                  {project.total_shares} shares · {formatSharePct(sharePct)} each
+                </Row>
+                <Row label="Valued on">{formatDate(project.valuation_date)}</Row>
+                <Row label="Still free to offer">
+                  {free === null ? '—' : `${free} share${free === 1 ? '' : 's'}`}
+                </Row>
+                <p className="pt-2 text-xs text-ink-muted">
+                  Fixed once a round of this project has been on the market, so a later
+                  valuation cannot change what somebody already bought.
+                </p>
+              </div>
+            )}
+
             <Field
-              label="Net asset value (NAV)"
-              required error={fields.net_asset_value}
-              hint="What the project’s land, building and other assets are worth, less what it owes."
+              label="Premium over NAV"
+              error={fields.premium_value}
+              hint="Brand, location, expected income — what this round adds on top. Leave it empty to sell at the project's valuation."
+              className="md:col-span-2"
             >
-              <MoneyInput value={d.net_asset_value} onChange={(e) => set('net_asset_value', e.target.value)} placeholder="e.g. 900000000" />
-            </Field>
-            <Field label="Premium over NAV" hint="Brand, location, expected income — what the owner adds on top of NAV.">
               <div className="flex items-start gap-2">
-                <SelectInput value={d.premium_mode} onChange={(e) => premiumMode(e.target.value as Draft['premium_mode'])} className="w-48 shrink-0" aria-label="Enter the premium as">
+                <SelectInput
+                  value={d.premium_mode}
+                  onChange={(e) => premiumMode(e.target.value as Draft['premium_mode'])}
+                  className="w-48 shrink-0"
+                  aria-label="Enter the premium as"
+                >
                   {(Object.keys(PREMIUM_MODE_LABEL) as Draft['premium_mode'][]).map((mode) => (
                     <option key={mode} value={mode}>
                       {PREMIUM_MODE_LABEL[mode]}
@@ -236,37 +292,63 @@ export function OfferingForm({
                 </SelectInput>
                 <div className="min-w-0 flex-1">
                   {d.premium_mode === 'amount' ? (
-                    <MoneyInput value={d.premium_value} onChange={(e) => set('premium_value', e.target.value)} placeholder="e.g. 300000000" />
+                    <MoneyInput
+                      value={d.premium_value}
+                      onChange={(e) => set('premium_value', e.target.value)}
+                      placeholder="e.g. 250000000"
+                    />
                   ) : (
-                    <TextInput type="number" min="0" step="0.1" value={d.premium_pct} onChange={(e) => set('premium_pct', e.target.value)} placeholder="e.g. 25" />
+                    <TextInput
+                      type="number"
+                      min="0"
+                      step="0.1"
+                      value={d.premium_pct}
+                      onChange={(e) => set('premium_pct', e.target.value)}
+                      placeholder="e.g. 25"
+                    />
                   )}
                 </div>
               </div>
               {premiumPctOfNav !== null && (
-                <span className="mt-1 block text-xs font-medium text-admin-700">{d.premium_mode === 'pct' ? `= ${formatBdt(premium)}` : `= ${premiumPctOfNav}% of NAV`}</span>
+                <span className="mt-1 block text-xs font-medium text-admin-700">
+                  {d.premium_mode === 'pct' ? `= ${formatBdt(premium)}` : `= ${premiumPctOfNav}% of NAV`}
+                </span>
               )}
             </Field>
-            <Field label="Valuation date" required>
-              <TextInput type="date" value={d.valuation_date} onChange={(e) => set('valuation_date', e.target.value)} />
-            </Field>
-            <div className="flex items-center gap-2 self-end rounded-xl border border-admin-100 bg-admin-50/60 px-3 py-2.5 text-sm">
-              <span className="text-ink-muted">Valuation</span>
-              <span className="ml-auto font-semibold tabular-nums text-admin-700">{m.valuation > 0 ? formatBdt(m.valuation) : '—'}</span>
-            </div>
           </div>
         </Card>
 
         <Card>
           <CardHeader
             title="2. Share offered to the market"
-            subtitle={d.project_id && free !== undefined ? `${formatSharePct(free)} of ${project?.name ?? 'this project'} is still free to offer.` : 'What part of the project goes on sale, split into how many shares, for how long.'}
+            subtitle={
+              free !== null
+                ? `${free} of ${project?.name ?? 'this project'}'s shares are still free to offer.`
+                : 'How many of the project’s shares go on sale in this round, and for how long.'
+            }
           />
           <div className="grid gap-4 md:grid-cols-3">
-            <Field label="% of project offered" required error={fields.offered_pct} hint={free !== undefined && d.project_id ? `Up to ${formatSharePct(free)}` : undefined}>
-              <TextInput type="number" min="0" max="100" step="0.01" value={d.offered_pct} onChange={(e) => set('offered_pct', e.target.value)} placeholder="e.g. 50" />
-            </Field>
-            <Field label="Number of shares" required error={fields.total_shares} hint={m.share_pct > 0 ? `${formatSharePct(m.share_pct)} ownership each` : undefined}>
-              <TextInput type="number" min="1" step="1" value={d.total_shares} onChange={(e) => set('total_shares', e.target.value)} placeholder="e.g. 500" />
+            <Field
+              label="Shares offered in this round"
+              required
+              error={fields.total_shares}
+              hint={
+                shares > 0 && sharePct > 0
+                  ? `${formatSharePct(offeredPct)} of the project`
+                  : free !== null
+                    ? `Up to ${free}`
+                    : undefined
+              }
+            >
+              <TextInput
+                type="number"
+                min="1"
+                step="1"
+                max={free ?? undefined}
+                value={d.total_shares}
+                onChange={(e) => set('total_shares', e.target.value)}
+                placeholder="e.g. 500"
+              />
             </Field>
             <Field label="Offer closes on" required error={fields.closes_on} hint={openDays ? `Open ${openDays} days if opened today` : 'Pick a day after today'}>
               <TextInput type="date" value={d.closes_on} min={addDays(today, 1)} max={addDays(today, 364)} onChange={(e) => set('closes_on', e.target.value)} />
@@ -363,9 +445,13 @@ export function OfferingForm({
                 <p className="text-sm font-semibold tabular-nums text-admin-700">{m.valuation ? formatCrore(m.valuation) : '—'}</p>
               </div>
             </div>
-            {m.premium_pct !== null && premium > 0 && <p className="mb-1 text-xs text-ink-muted">Premium is {Number(m.premium_pct.toFixed(1))}% over NAV.</p>}
+            {premiumPctOfNav !== null && premium > 0 && (
+              <p className="mb-1 text-xs text-ink-muted">Premium is {premiumPctOfNav}% over NAV.</p>
+            )}
             <div className="divide-y divide-hairline">
-              <Row label="Offered to the market">{terms.offered_pct ? `${formatSharePct(terms.offered_pct)} · ${shares || '—'} shares` : '—'}</Row>
+              <Row label="Offered to the market">
+                {shares > 0 ? `${shares} shares · ${formatSharePct(offeredPct)}` : '—'}
+              </Row>
               <Row label="Ownership per share">{m.share_pct ? formatSharePct(m.share_pct) : '—'}</Row>
               <Row label="Price per share" strong>
                 {m.price_per_share ? formatBdt(m.price_per_share) : '—'}
@@ -373,7 +459,11 @@ export function OfferingForm({
               <Row label="Raises if every share sells" strong>
                 {m.raise ? formatBdt(m.raise) : '—'}
               </Row>
-              <Row label="Owner keeps after this offering">{d.project_id && free !== undefined && terms.offered_pct ? formatSharePct(Math.max(0, free - terms.offered_pct)) : '—'}</Row>
+              <Row label="Owner keeps after this round">
+                {free !== null && shares > 0
+                  ? `${Math.max(0, free - shares)} shares · ${formatSharePct(Math.max(0, free - shares) * sharePct)}`
+                  : '—'}
+              </Row>
               <Row label="Offer closes">{openDays ? `${formatDate(d.closes_on)} · ${openDays} days` : '—'}</Row>
             </div>
           </div>

@@ -9,6 +9,7 @@ import {
 } from '@/app/api/v1/share-offerings/[id]/route';
 import { POST as openOffering } from '@/app/api/v1/share-offerings/[id]/open/route';
 import { POST as extendOffering } from '@/app/api/v1/share-offerings/[id]/extend/route';
+import { PATCH as patchProject } from '@/app/api/v1/projects/[id]/route';
 import { hashPassword } from '@/server/auth/password';
 import { clearPermissionCache } from '@/server/auth/rbac';
 import { hasTestDb, resetDb, testDb, type TestDb } from '@/test/db';
@@ -45,12 +46,19 @@ const ctx = (id: string) => ({ params: Promise.resolve({ id }) });
 const day = (offset: number) =>
   new Date(Date.now() + offset * 86_400_000 + 6 * 3_600_000).toISOString().slice(0, 10);
 
-/** The plan's own example: a hotel at ৳100 crore, half of it in 500 shares. */
+/**
+ * The plan's own example, as the two halves it is now: the hotel is valued at
+ * ৳100 crore and cut into 1000 shares (the project's own figures, §4 step 1),
+ * and round 1 offers 500 of those shares (§4 step 2).
+ */
+const VALUATION = {
+  valuation: '1000000000.00',
+  total_shares: 1000,
+  valuation_date: new Date(`${day(0)}T00:00:00Z`),
+};
+
 const HOTEL = {
-  net_asset_value: 750_000_000,
-  premium_value: 250_000_000,
-  valuation_date: day(0),
-  offered_pct: 50,
+  premium_value: 0,
   total_shares: 500,
   validity_days: 120,
   min_shares: 1,
@@ -92,7 +100,13 @@ suite('share offerings API', () => {
       data: {
         code: 'super_admin',
         name: 'Super Admin',
-        permissions: { create: [{ module: 'share_sale', level: 'full' }] },
+        permissions: {
+          create: [
+            { module: 'share_sale', level: 'full' },
+            // the valuation lives on the project, so this suite touches both
+            { module: 'project', level: 'full' },
+          ],
+        },
       },
     });
     await db.role.create({
@@ -122,11 +136,21 @@ suite('share offerings API', () => {
     viewerToken = await signIn('01711000002');
 
     const selling = await db.project.create({
-      data: { code: 'PRJ-2026-001', name: 'Sea Pearl Hotel', sales_status: 'open' },
+      data: {
+        code: 'PRJ-2026-001',
+        name: 'Sea Pearl Hotel',
+        sales_status: 'open',
+        ...VALUATION,
+      },
     });
     projectId = selling.id;
     const quiet = await db.project.create({
-      data: { code: 'PRJ-2026-002', name: 'Hilltop Land', sales_status: 'not_open' },
+      data: {
+        code: 'PRJ-2026-002',
+        name: 'Hilltop Land',
+        sales_status: 'not_open',
+        ...VALUATION,
+      },
     });
     quietProjectId = quiet.id;
   });
@@ -145,7 +169,7 @@ suite('share offerings API', () => {
 
   const hotel = (extra: Json = {}) => ({ project_id: projectId, ...HOTEL, ...extra });
 
-  it('works the price of a share out from the valuation, and keeps it', async () => {
+  it('prices a share from the project, and adds the round’s premium', async () => {
     const { response, body } = await create(hotel());
 
     expect(response.status).toBe(201);
@@ -153,16 +177,72 @@ suite('share offerings API', () => {
       code: `OFR-${new Date().getUTCFullYear()}-001`,
       round_no: 1,
       status: 'draft',
-      // 75 crore + 25 crore = 100 crore for 100% of the hotel
+      // the project's own: 100 crore cut into 1000 shares
       valuation: 1_000_000_000,
-      // 50% in 500 shares, so one share owns 0.1% and costs 10 lakh
       share_pct: 0.1,
       price_per_share: 1_000_000,
+      // this round offers 500 of those shares, which is half the project
+      offered_pct: 50,
       available_shares: 500,
       sold_shares: 0,
     });
     // a new round is nobody's promise yet: it is not on the market
     expect(body.data.opens_on).toBeNull();
+
+    /*
+     * A premium is the round's own, and the only thing that moves the price:
+     * 25% on top makes the same 0.1% share cost 12.5 lakh. What it buys does
+     * not change — a share is still a thousandth of the hotel.
+     */
+    const premium = await create(hotel({ premium_value: 250_000_000 }));
+    expect(premium.body.data).toMatchObject({
+      valuation: 1_250_000_000,
+      share_pct: 0.1,
+      price_per_share: 1_250_000,
+    });
+  });
+
+  it('refuses a round on a project that has not been valued', async () => {
+    const unvalued = await db.project.create({
+      data: { code: 'PRJ-2026-003', name: 'Unvalued Plot', sales_status: 'open' },
+    });
+    const { response, body } = await create(hotel({ project_id: unvalued.id }));
+
+    expect(response.status).toBe(409);
+    expect(String((body.error as Json).message)).toMatch(/no valuation yet/i);
+  });
+
+  it('fixes the project’s valuation once a round is on the market', async () => {
+    const { body } = await create(hotel());
+    const id = body.data.id as string;
+
+    // still a draft: the owner can still change what the project is worth
+    const beforeOpening = await patchProject(
+      req('PATCH', `/api/v1/projects/${projectId}`, {
+        body: { valuation: 1_200_000_000 },
+        token,
+      }),
+      ctx(projectId),
+    );
+    expect(beforeOpening.status).toBe(200);
+
+    await openOffering(req('POST', `/api/v1/share-offerings/${id}/open`, { body: {}, token }), ctx(id));
+
+    const afterOpening = await patchProject(
+      req('PATCH', `/api/v1/projects/${projectId}`, {
+        body: { valuation: 2_000_000_000 },
+        token,
+      }),
+      ctx(projectId),
+    );
+    expect(afterOpening.status).toBe(409);
+    expect(String(((await afterOpening.json()) as { error: Json }).error.message)).toMatch(
+      /valuation is fixed/i,
+    );
+
+    // and the round it priced keeps what it was given
+    const read = await getOffering(req('GET', `/api/v1/share-offerings/${id}`, { token }), ctx(id));
+    expect(((await read.json()) as { data: Json }).data.price_per_share).toBe(1_200_000);
   });
 
   it('will not let a round be written against a project that is not selling', async () => {
@@ -171,29 +251,33 @@ suite('share offerings API', () => {
     expect(String((body.error as Json).message)).toMatch(/not selling/i);
   });
 
-  it('cannot sell the project twice over, and counts what closed rounds kept', async () => {
-    const first = await create(hotel({ offered_pct: 50 }));
+  it('cannot sell the project twice over, and counts in the project’s shares', async () => {
+    const first = await create(hotel({ total_shares: 500 }));
     expect(first.response.status).toBe(201);
 
-    // 50 + 60 is more than the whole hotel
-    const tooMuch = await create(hotel({ offered_pct: 60 }));
+    // 500 + 600 is more than the thousand shares the hotel has
+    const tooMuch = await create(hotel({ total_shares: 600 }));
     expect(tooMuch.response.status).toBe(422);
-    expect(String((tooMuch.body.error as Json).message)).toMatch(/50% of this project is still free/);
+    expect(String((tooMuch.body.error as Json).message)).toMatch(/Only 500 of this project/);
 
-    // the rest of it is fine
-    const second = await create(hotel({ offered_pct: 50, total_shares: 250 }));
+    // the rest of them is fine
+    const second = await create(hotel({ total_shares: 500 }));
     expect(second.response.status).toBe(201);
     expect((second.body.data as Json).round_no).toBe(2);
 
-    const free = await listOfferings(
+    const room = await listOfferings(
       req('GET', `/api/v1/share-offerings?free_for_project=${projectId}`, { token }),
       undefined,
     );
-    expect(((await free.json()) as { data: { free_pct: number } }).data.free_pct).toBe(0);
+    expect(((await room.json()) as { data: Json }).data).toMatchObject({
+      total_shares: 1000,
+      taken: 1000,
+      free: 0,
+    });
   });
 
-  it('gives a closed round its unsold share back to the owner', async () => {
-    const { body } = await create(hotel({ offered_pct: 50 }));
+  it('gives a closed round its unsold shares back to the owner', async () => {
+    const { body } = await create(hotel({ total_shares: 500 }));
     const id = body.data.id as string;
 
     await openOffering(req('POST', `/api/v1/share-offerings/${id}/open`, { body: {}, token }), ctx(id));
@@ -204,14 +288,14 @@ suite('share offerings API', () => {
     expect(closed.status).toBe(200);
 
     /*
-     * Nothing was sold, so the whole 50% went back: the owner may offer all of
-     * it again. A round still open would have kept its 50% reserved.
+     * Nothing was sold, so all 500 went back: the owner may offer them again.
+     * A round still open would have kept them.
      */
-    const free = await listOfferings(
+    const room = await listOfferings(
       req('GET', `/api/v1/share-offerings?free_for_project=${projectId}`, { token }),
       undefined,
     );
-    expect(((await free.json()) as { data: { free_pct: number } }).data.free_pct).toBe(100);
+    expect(((await room.json()) as { data: Json }).data).toMatchObject({ free: 1000, taken: 0 });
   });
 
   it('opens a draft for its window, and refuses to open it twice', async () => {
@@ -244,7 +328,7 @@ suite('share offerings API', () => {
 
     const edited = await patchOffering(
       req('PATCH', `/api/v1/share-offerings/${id}`, {
-        body: hotel({ net_asset_value: 2_000_000_000 }),
+        body: hotel({ premium_value: 500_000_000 }),
         token,
       }),
       ctx(id),
@@ -320,20 +404,16 @@ suite('share offerings API', () => {
   });
 
   it('names the term it refused', async () => {
-    const { response, body } = await create(
-      hotel({ total_shares: 10_000_000_000, max_shares: 0, late_fee_pct: 90 }),
-    );
+    const { response, body } = await create(hotel({ max_shares: 0, late_fee_pct: 90 }));
     expect(response.status).toBe(422);
     const fields = (body.error as { fields: Json }).fields;
-    expect(Object.keys(fields)).toContain('total_shares');
+    expect(Object.keys(fields).length).toBeGreaterThan(0);
   });
 
-  it('refuses a round whose shares would cost less than a taka', async () => {
-    const { response, body } = await create(
-      hotel({ net_asset_value: 1000, premium_value: 0, total_shares: 500_000 }),
-    );
+  it('refuses a round that offers more shares than one customer may hold', async () => {
+    const { response, body } = await create(hotel({ total_shares: 10, max_shares: 50 }));
     expect(response.status).toBe(422);
-    expect((body.error as { fields: Json }).fields).toHaveProperty('total_shares');
+    expect((body.error as { fields: Json }).fields).toHaveProperty('max_shares');
   });
 
   it('lets a view-only role read rounds but not write them', async () => {

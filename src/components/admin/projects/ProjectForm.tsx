@@ -23,23 +23,36 @@ import { documentRepository, lookupRepository } from '@/lib/repositories';
 
 interface FormState {
   name: string;
+  description: string;
   location_summary: string;
   total_land_area: string;
   total_land_area_unit: LandSizeUnit;
-  expected_start_date: string;
-  expected_completion_date: string;
   project_manager: string;
+  construction_after_sale: ApiProject['construction_after_sale'];
   surroundings: string;
 }
 
+/**
+ * What happens to the land once its shares are sold.
+ *
+ * An investor's first question after "what do I own" — the answer changes
+ * whether they are buying land that sits, or land that becomes a building.
+ * Already a column on the project; it was never on the form.
+ */
+const AFTER_SALE_LABEL: Record<ApiProject['construction_after_sale'], string> = {
+  undecided: 'Not decided yet',
+  planned: 'Construction planned for the shareholders',
+  none: 'No construction — the land stays as shares',
+};
+
 const EMPTY: FormState = {
   name: '',
+  description: '',
   location_summary: '',
   total_land_area: '',
   total_land_area_unit: 'katha',
-  expected_start_date: '',
-  expected_completion_date: '',
   project_manager: '',
+  construction_after_sale: 'undecided',
   surroundings: '',
 };
 
@@ -48,12 +61,12 @@ const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 function toFormState(p: ApiProject): FormState {
   return {
     name: p.name,
+    description: str(p.description),
     location_summary: str(p.location_summary),
     total_land_area: str(p.total_land_area),
     total_land_area_unit: p.total_land_area_unit ?? 'katha',
-    expected_start_date: str(p.expected_start_date),
-    expected_completion_date: str(p.expected_completion_date),
     project_manager: str(p.project_manager_id),
+    construction_after_sale: p.construction_after_sale,
     surroundings: str(p.surroundings),
   };
 }
@@ -114,13 +127,6 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
     if (form.total_land_area.trim() && !(Number(form.total_land_area) > 0)) {
       next.total_land_area = 'Enter the area as a number, or leave it blank';
     }
-    if (
-      form.expected_start_date &&
-      form.expected_completion_date &&
-      form.expected_completion_date < form.expected_start_date
-    ) {
-      next.expected_completion_date = 'Target sell-out cannot be before the sales start';
-    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -133,12 +139,12 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
       const area = form.total_land_area.trim() ? Number(form.total_land_area) : null;
       const payload = {
         name: form.name.trim(),
+        description: form.description.trim() || null,
         location_summary: form.location_summary.trim() || null,
         total_land_area: area,
         total_land_area_unit: area === null ? null : form.total_land_area_unit,
-        expected_start_date: form.expected_start_date || null,
-        expected_completion_date: form.expected_completion_date || null,
         project_manager_id: form.project_manager || null,
+        construction_after_sale: form.construction_after_sale,
         surroundings: form.surroundings.trim() || null,
         amenities,
       };
@@ -227,14 +233,31 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
               placeholder="e.g. Bashundhara R/A, Dhaka"
             />
           </Field>
+          {/*
+            What this project is, in the words an investor reads before they
+            decide. The public listing and the offer document both need it, and
+            nothing else on the project said it.
+          */}
+          <Field
+            label="About this project"
+            className="xl:col-span-3"
+            hint="A few sentences: what it is, where it is, why somebody would buy a share of it."
+          >
+            <TextArea
+              value={form.description}
+              onChange={(e) => set('description', e.target.value)}
+              placeholder="e.g. A five-storey commercial plot on the Bashundhara main road, held for rental income while the area develops."
+              rows={4}
+            />
+          </Field>
         </div>
       </Card>
 
       {/* 2 — the land it stands on, and the selling window */}
       <Card>
         <CardHeader
-          title="Land & sale period"
-          subtitle="The land is a fact about the project here; buying land is not part of this phase."
+          title="The land, and what happens to it"
+          subtitle="The land is a fact about the project here; buying land is not part of this phase. When shares go on sale, and for how long, belongs to each share offering."
         />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
           <Field label="Total land area" error={errors.total_land_area} hint="Optional">
@@ -258,24 +281,23 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
               ))}
             </SelectInput>
           </Field>
-          <Field label="Sales start" hint="When shares go on the market">
-            <TextInput
-              type="date"
-              value={form.expected_start_date}
-              onChange={(e) => set('expected_start_date', e.target.value)}
-            />
-          </Field>
           <Field
-            label="Target sell-out"
-            error={errors.expected_completion_date}
-            hint="When every share is expected to be sold"
+            label="After the shares are sold"
+            className="md:col-span-2"
+            hint="What an investor is buying into: land that sits, or land that becomes a building."
           >
-            <TextInput
-              type="date"
-              value={form.expected_completion_date}
-              onChange={(e) => set('expected_completion_date', e.target.value)}
-              invalid={Boolean(errors.expected_completion_date)}
-            />
+            <SelectInput
+              value={form.construction_after_sale}
+              onChange={(e) =>
+                set('construction_after_sale', e.target.value as FormState['construction_after_sale'])
+              }
+            >
+              {(Object.keys(AFTER_SALE_LABEL) as FormState['construction_after_sale'][]).map((k) => (
+                <option key={k} value={k}>
+                  {AFTER_SALE_LABEL[k]}
+                </option>
+              ))}
+            </SelectInput>
           </Field>
         </div>
       </Card>

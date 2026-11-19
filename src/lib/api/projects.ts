@@ -29,7 +29,18 @@ export interface ApiProject {
   sales_status: ProjectSalesStatus;
   total_land_area: number | null;
   total_land_area_unit: LandSizeUnit | null;
+  description: string | null;
   location_summary: string | null;
+  /** what 100% of the project is worth, and into how many shares it is cut */
+  valuation: number | null;
+  total_shares: number | null;
+  valuation_date: string | null;
+  /** 100 / total_shares — what one share of this project owns */
+  share_pct: number | null;
+  shares_offered: number;
+  shares_free: number | null;
+  /** true once a round has been on the market: the valuation is fixed */
+  valuation_locked: boolean;
   expected_start_date: string | null;
   expected_completion_date: string | null;
   project_manager_id: string | null;
@@ -64,6 +75,10 @@ export type ProjectWrite = Partial<
   Pick<
     ApiProject,
     | 'name'
+    | 'description'
+    | 'valuation'
+    | 'total_shares'
+    | 'valuation_date'
     | 'project_type'
     | 'status'
     | 'total_land_area'

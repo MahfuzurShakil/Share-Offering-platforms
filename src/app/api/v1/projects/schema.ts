@@ -28,7 +28,21 @@ export const ProjectFields = z.object({
   ]),
   total_land_area: z.number().positive('Enter the area as a number.').max(99_999_999).nullable(),
   total_land_area_unit: z.enum(['katha', 'bigha', 'decimal']).nullable(),
+  description: z.string().trim().max(8000).nullable(),
   location_summary: z.string().trim().max(300).nullable(),
+  /*
+   * The valuation block. It is on the project, not on a round, because one
+   * share has to mean the same thing in every round — and the service refuses
+   * it once a round has been on the market.
+   */
+  valuation: z.number().positive('What 100% of this project is worth.').nullable(),
+  total_shares: z
+    .number()
+    .int()
+    .min(1, 'At least one share.')
+    .max(10_000_000)
+    .nullable(),
+  valuation_date: dateOnly,
   expected_start_date: dateOnly,
   expected_completion_date: dateOnly,
   project_manager_id: z.string().uuid('Pick a project manager from the list.').nullable(),

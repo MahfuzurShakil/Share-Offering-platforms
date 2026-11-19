@@ -418,6 +418,8 @@ model Project {
   project_type                ProjectType           @default(land_share)
   status                      ProjectStatus         @default(planning)
   sales_status                ProjectSalesStatus    @default(not_open)
+  /// what the public listing says this project is
+  description                 String?
   /// a fact typed on the project in Phase 1; a link to the Land module in Phase 2
   total_land_area             Decimal?              @db.Decimal(14, 2)
   total_land_area_unit        LandSizeUnit?
@@ -437,6 +439,18 @@ model Project {
   /// the late fee a new share agreement on this project starts from
   default_late_fee_pct        Decimal?              @db.Decimal(6, 3)
   default_late_fee_grace_days Int?
+  /// What the whole project is worth, and into how many equal shares it is
+  /// divided. Set on the project, not on each round: one share has to mean
+  /// the same thing in every round, or two buyers who both hold "ten shares"
+  /// own different fractions of the same project.
+  ///
+  /// A round adds its own premium on top of this and offers some of these
+  /// shares, keeping a copy of both figures - so revaluing the project later
+  /// cannot rewrite what somebody already bought. Locked once a round has
+  /// been on the market.
+  valuation                   Decimal?              @db.Decimal(18, 2)
+  total_shares                Int?
+  valuation_date              DateTime?             @db.Date
   is_public                   Boolean               @default(false)
   is_featured                 Boolean               @default(false)
   created_at                  DateTime              @default(now()) @db.Timestamptz
@@ -562,14 +576,15 @@ model ShareOffering {
   /// 1 for the project's first offering, then 2, 3…
   round_no   Int
 
-  /// valuation = net asset value + premium: the worth of 100% of the project
+  /// the project's own valuation, copied onto the round when it is drafted
   net_asset_value Decimal  @db.Decimal(18, 2)
   premium_value   Decimal  @default(0) @db.Decimal(18, 2)
   valuation       Decimal  @db.Decimal(18, 2)
   valuation_date  DateTime @db.Date
 
-  /// % of the whole project offered in this round
+  /// % of the whole project this round offers - total_shares x share_pct
   offered_pct     Decimal @db.Decimal(9, 6)
+  /// how many of the project's shares are on the market in this round
   total_shares    Int
   /// what one share owns, in % — offered_pct divided by total_shares
   share_pct       Decimal @db.Decimal(9, 6)

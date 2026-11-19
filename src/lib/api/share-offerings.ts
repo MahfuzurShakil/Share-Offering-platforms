@@ -56,13 +56,18 @@ export interface ApiShareOffering {
   raised: number;
 }
 
-/** The terms a person sets. Everything else the round earns or is given. */
+/**
+ * The terms a person sets.
+ *
+ * Not here: the valuation, the share size and the date. They belong to the
+ * project, and the server copies them onto the round — so a round cannot be
+ * priced off a valuation the project does not have.
+ */
 export interface ShareOfferingWrite {
   project_id: string;
-  net_asset_value: number;
+  /** what this round adds on top of the project's valuation */
   premium_value: number;
-  valuation_date: string;
-  offered_pct: number;
+  /** how many of the project's shares this round offers */
   total_shares: number;
   validity_days?: number;
   closes_on?: string | null;
@@ -77,6 +82,14 @@ export interface ShareOfferingWrite {
   grace_days: number;
   hold_days: number;
   notes?: string | null;
+}
+
+/** What a project has left to offer. */
+export interface ProjectRoom {
+  total_shares: number | null;
+  taken: number;
+  free: number;
+  free_pct: number;
 }
 
 export interface ShareOfferingQuery {
@@ -101,17 +114,16 @@ export const shareOfferingsApi = {
   },
 
   /**
-   * How much of a project is still free to offer — what the form has to know
-   * before it can let a percentage be typed, because the project's other
-   * rounds have already promised some of it.
+   * How many of a project's shares are still free to offer — what the form has
+   * to know before a number can be typed, because the project's other rounds
+   * have already taken some of them.
    */
-  async freePct(project_id: string, except?: string, signal?: AbortSignal): Promise<number> {
-    const { free_pct } = await api.get<{ free_pct: number }>(
+  room(project_id: string, except?: string, signal?: AbortSignal): Promise<ProjectRoom> {
+    return api.get<ProjectRoom>(
       '/share-offerings',
       { free_for_project: project_id, except },
       signal,
     );
-    return free_pct;
   },
 
   create(input: ShareOfferingWrite): Promise<ApiShareOffering> {
@@ -150,6 +162,6 @@ export const shareOfferingKeys = {
   all: ['share-offerings'] as const,
   list: (query: ShareOfferingQuery) => ['share-offerings', 'list', query] as const,
   one: (id: string) => ['share-offerings', 'one', id] as const,
-  free: (project_id: string, except?: string) =>
-    ['share-offerings', 'free', project_id, except ?? null] as const,
+  room: (project_id: string, except?: string) =>
+    ['share-offerings', 'room', project_id, except ?? null] as const,
 };

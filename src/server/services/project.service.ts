@@ -38,7 +38,11 @@ const ADMIN_SELECT = {
   sales_status: true,
   total_land_area: true,
   total_land_area_unit: true,
+  description: true,
   location_summary: true,
+  valuation: true,
+  total_shares: true,
+  valuation_date: true,
   expected_start_date: true,
   expected_completion_date: true,
   project_manager_id: true,
@@ -69,7 +73,19 @@ export interface ProjectDto {
   sales_status: string;
   total_land_area: number | null;
   total_land_area_unit: string | null;
+  description: string | null;
   location_summary: string | null;
+  /** what 100% of the project is worth, and into how many shares it is cut */
+  valuation: number | null;
+  total_shares: number | null;
+  valuation_date: string | null;
+  /** 100 / total_shares — what one share of this project owns */
+  share_pct: number | null;
+  /** how many of its shares are promised to rounds already, and what is left */
+  shares_offered: number;
+  shares_free: number | null;
+  /** false once a round has been on the market: the valuation is fixed then */
+  valuation_locked: boolean;
   /** `YYYY-MM-DD`; these are dates, not moments */
   expected_start_date: string | null;
   expected_completion_date: string | null;
@@ -96,7 +112,15 @@ export interface ProjectDto {
  * percentages become `number`, a date column becomes `YYYY-MM-DD`, and a
  * timestamp becomes an ISO string.
  */
-function toDto(row: ProjectRow): ProjectDto {
+interface ValuationUse {
+  /** shares the project's rounds have put on the market */
+  offered: number;
+  /** true once one of those rounds has been opened */
+  locked: boolean;
+}
+
+function toDto(row: ProjectRow, use: ValuationUse = { offered: 0, locked: false }): ProjectDto {
+  const shares = row.total_shares;
   return {
     id: row.id,
     code: row.code,
@@ -106,7 +130,15 @@ function toDto(row: ProjectRow): ProjectDto {
     sales_status: row.sales_status,
     total_land_area: decimalOrNull(row.total_land_area),
     total_land_area_unit: row.total_land_area_unit ?? null,
+    description: row.description,
     location_summary: row.location_summary,
+    valuation: decimalOrNull(row.valuation),
+    total_shares: shares,
+    valuation_date: dateOnly(row.valuation_date),
+    share_pct: shares ? Number((100 / shares).toFixed(6)) : null,
+    shares_offered: use.offered,
+    shares_free: shares === null ? null : Math.max(0, shares - use.offered),
+    valuation_locked: use.locked,
     expected_start_date: dateOnly(row.expected_start_date),
     expected_completion_date: dateOnly(row.expected_completion_date),
     project_manager_id: row.project_manager_id,
@@ -225,7 +257,19 @@ export async function listProjects(
     prisma.project.count({ where }),
   ]);
 
-  return { rows: rows.map(toDto), total, page, page_size };
+  /*
+   * What each project's rounds have taken out of its shares, for the whole
+   * page in one query — the share-offering form reads this to say how many
+   * shares are still free before anything is typed.
+   */
+  const use = await valuationUseFor(rows.map((r: ProjectRow) => r.id));
+
+  return {
+    rows: rows.map((row: ProjectRow) => toDto(row, use.get(row.id))),
+    total,
+    page,
+    page_size,
+  };
 }
 
 /** One project, or 404. Scoped users are refused another team's project. */
@@ -236,7 +280,7 @@ export async function getProject(
   const row = await prisma.project.findUnique({ where: { id }, select: ADMIN_SELECT });
   if (!row) throw notFound('That project');
   assertWithinScope(principal, row.id);
-  return toDto(row);
+  return toDto(row, await valuationUse(prisma, row.id));
 }
 
 /* ------------------------------------------------------------------ *
@@ -246,6 +290,11 @@ export async function getProject(
 /** Everything a person may set on a project. Nothing else is written. */
 export interface ProjectInput {
   name?: string;
+  description?: string | null;
+  /** the valuation block; refused once a round has been on the market */
+  valuation?: number | null;
+  total_shares?: number | null;
+  valuation_date?: string | null;
   project_type?: string;
   status?: string;
   total_land_area?: number | null;
@@ -307,6 +356,10 @@ function columnsFor(input: ProjectInput): Prisma.ProjectUncheckedUpdateInput {
   const area = input.total_land_area;
   return {
     name: input.name?.trim(),
+    description: input.description,
+    valuation: input.valuation,
+    total_shares: input.total_shares,
+    valuation_date: fromDateOnly(input.valuation_date),
     project_type: input.project_type as Prisma.ProjectUncheckedUpdateInput['project_type'],
     status: input.status as Prisma.ProjectUncheckedUpdateInput['status'],
     total_land_area: area === undefined ? undefined : area,
@@ -333,6 +386,93 @@ function columnsFor(input: ProjectInput): Prisma.ProjectUncheckedUpdateInput {
   };
 }
 
+/* ------------------------------------------------------------------ *
+ * The valuation block
+ * ------------------------------------------------------------------ */
+
+/**
+ * How much of the project its rounds have taken, and whether the valuation is
+ * still the owner's to change.
+ *
+ * A draft round is still private, so it holds nothing and locks nothing. Once
+ * a round has been opened, people have been shown a price worked out from this
+ * valuation — changing it afterwards would silently reprice what they were
+ * promised, so it is fixed from then on. Cancelled rounds give their shares
+ * back.
+ */
+async function valuationUse(client: Tx, projectId: string): Promise<ValuationUse> {
+  const rounds = await client.shareOffering.findMany({
+    where: { project_id: projectId, deleted_at: null, status: { not: 'cancelled' } },
+    select: { status: true, total_shares: true },
+  });
+
+  let offered = 0;
+  let locked = false;
+  for (const round of rounds as { status: string; total_shares: number }[]) {
+    offered += round.total_shares;
+    if (round.status !== 'draft') locked = true;
+  }
+  return { offered, locked };
+}
+
+/** The same, for a page of projects at once. */
+async function valuationUseFor(projectIds: string[]): Promise<Map<string, ValuationUse>> {
+  const out = new Map<string, ValuationUse>();
+  if (projectIds.length === 0) return out;
+
+  const rounds = await prisma.shareOffering.findMany({
+    where: { project_id: { in: projectIds }, deleted_at: null, status: { not: 'cancelled' } },
+    select: { project_id: true, status: true, total_shares: true },
+  });
+  for (const round of rounds as { project_id: string; status: string; total_shares: number }[]) {
+    const entry = out.get(round.project_id) ?? { offered: 0, locked: false };
+    entry.offered += round.total_shares;
+    if (round.status !== 'draft') entry.locked = true;
+    out.set(round.project_id, entry);
+  }
+  return out;
+}
+
+/**
+ * What a valuation has to satisfy to be usable.
+ *
+ * All three fields travel together: a value with no share count cannot price a
+ * share, and a share count with no value cannot either.
+ */
+function checkValuation(input: ProjectInput, current: {
+  valuation: Prisma.Decimal | null;
+  total_shares: number | null;
+  valuation_date: Date | null;
+}): void {
+  const touching =
+    input.valuation !== undefined ||
+    input.total_shares !== undefined ||
+    input.valuation_date !== undefined;
+  if (!touching) return;
+
+  const valuation = input.valuation ?? decimalOrNull(current.valuation);
+  const shares = input.total_shares ?? current.total_shares;
+  const date = input.valuation_date ?? dateOnly(current.valuation_date);
+
+  // clearing all three is how a valuation is removed before anything uses it
+  if (valuation === null && shares === null) return;
+
+  const fields: Record<string, string> = {};
+  if (!(valuation !== null && valuation > 0)) {
+    fields.valuation = 'What 100% of this project is worth.';
+  }
+  if (!(shares !== null && Number.isInteger(shares) && shares >= 1 && shares <= 10_000_000)) {
+    fields.total_shares = 'How many equal shares the project is divided into.';
+  }
+  if (!date) fields.valuation_date = 'The day this valuation was made.';
+  if (valuation !== null && shares !== null && shares > 0 && valuation / shares < 1) {
+    fields.total_shares = 'That many shares would each be worth less than ৳1.';
+  }
+  if (Object.keys(fields).length > 0) {
+    throw invalid('This valuation cannot be used to price a share.', fields);
+  }
+}
+
 /**
  * Creates a project.
  *
@@ -348,6 +488,8 @@ export async function createProject(input: ProjectInput): Promise<ProjectDto> {
   const start = fromDateOnly(input.expected_start_date);
   const end = fromDateOnly(input.expected_completion_date);
   assertDatesInOrder(start, end);
+
+  checkValuation(input, { valuation: null, total_shares: null, valuation_date: null });
 
   const row = await withTx(async (tx: Tx) => {
     await assertNameFree(tx, name);
@@ -379,9 +521,40 @@ export async function updateProject(
   const row = await withTx(async (tx: Tx) => {
     const current = await tx.project.findUnique({
       where: { id },
-      select: { id: true, expected_start_date: true, expected_completion_date: true, is_public: true },
+      select: {
+        id: true,
+        expected_start_date: true,
+        expected_completion_date: true,
+        is_public: true,
+        valuation: true,
+        total_shares: true,
+        valuation_date: true,
+      },
     });
     if (!current) throw notFound('That project');
+
+    const use = await valuationUse(tx, id);
+    const touchingValuation =
+      input.valuation !== undefined ||
+      input.total_shares !== undefined ||
+      input.valuation_date !== undefined;
+
+    if (touchingValuation && use.locked) {
+      throw conflict(
+        'This project has a share round on the market, so its valuation is fixed. A new valuation goes into a new round as a premium.',
+      );
+    }
+    checkValuation(input, current);
+    if (
+      input.total_shares !== undefined &&
+      input.total_shares !== null &&
+      input.total_shares < use.offered
+    ) {
+      throw invalid(
+        `Its draft rounds already offer ${use.offered} shares.`,
+        { total_shares: `Cannot be fewer than ${use.offered}.` },
+      );
+    }
 
     const name = input.name?.trim();
     if (input.name !== undefined && !name) {
@@ -403,10 +576,11 @@ export async function updateProject(
       });
     }
 
-    return tx.project.update({ where: { id }, data: columns, select: ADMIN_SELECT });
+    const saved = await tx.project.update({ where: { id }, data: columns, select: ADMIN_SELECT });
+    return { saved, use: await valuationUse(tx, id) };
   });
 
-  return toDto(row);
+  return toDto(row.saved, row.use);
 }
 
 /** The moves sales can make, and from where. */

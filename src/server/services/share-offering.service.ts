@@ -1,11 +1,5 @@
 import { Prisma } from '@prisma/client';
-import {
-  SALE_HOLDS_SHARES,
-  addDays,
-  closesOn,
-  daysBetween,
-  offeringMath,
-} from '@/lib/domain/share-sale';
+import { SALE_HOLDS_SHARES, addDays, closesOn, daysBetween } from '@/lib/domain/share-sale';
 import { currentActorId } from '../audit/audit';
 import { assertWithinScope, type StaffPrincipal } from '../auth/rbac';
 import { prisma, withTx, type Tx } from '../db/prisma';
@@ -21,11 +15,18 @@ import { nextCode } from '../numbering/code-series';
  * for a number of days, and a customer buys into that round. So every rule
  * here is about the round being a promise the owner can keep:
  *
- *   * the arithmetic is the platform's, not the typist's — `share_pct` and
- *     `price_per_share` are computed from the valuation and stored, because
- *     what a buyer agreed to must not move when the project is revalued;
- *   * a project cannot be sold twice over — the percentages promised by its
- *     rounds, plus what its closed rounds actually sold, can never pass 100;
+ *   * what one share is comes from the project, not from the round. The
+ *     project says what it is worth and into how many shares it is cut; a
+ *     round offers some of those shares and may add a premium on top. So a
+ *     share means the same fraction in every round, which is what makes a cap
+ *     table across rounds readable at all;
+ *   * the arithmetic is the platform's, not the typist's. The round copies the
+ *     project's valuation and share size when it is drafted and keeps them,
+ *     because what a buyer agreed to must not move when the project is
+ *     revalued;
+ *   * a project cannot be sold twice over — the shares its rounds hold, plus
+ *     what its closed rounds actually sold, can never pass the project's own
+ *     share count;
  *   * a draft can be changed, an open round cannot: its price is what buyers
  *     were shown.
  *
@@ -205,42 +206,57 @@ async function takenByOffering(
  * ------------------------------------------------------------------ */
 
 /**
- * The percentage of the project its other rounds have already promised.
+ * Shares of the project its rounds are holding.
  *
- * A live round counts for everything it offered, because any of it may still
- * sell. A closed one counts only for what it actually sold or still holds —
- * the rest went back to the owner and can be offered again. A cancelled one
- * counts for nothing.
+ * A live round holds every share it offered, because any of them may still
+ * sell. A closed one holds only what it actually sold or still has reserved —
+ * the rest went back to the owner and can go into a later round. A cancelled
+ * one holds nothing.
  */
-async function pctTaken(client: Tx, projectId: string, exceptId?: string): Promise<number> {
+async function sharesTaken(client: Tx, projectId: string, exceptId?: string): Promise<number> {
   const offerings = await client.shareOffering.findMany({
     where: { project_id: projectId, ...(exceptId ? { id: { not: exceptId } } : {}) },
-    select: { id: true, status: true, offered_pct: true, share_pct: true },
+    select: { id: true, status: true, total_shares: true },
   });
   const taken = await takenByOffering(client, offerings.map((o: { id: string }) => o.id));
 
   let total = 0;
-  for (const offering of offerings as {
-    id: string;
-    status: string;
-    offered_pct: Prisma.Decimal;
-    share_pct: Prisma.Decimal;
-  }[]) {
+  for (const offering of offerings as { id: string; status: string; total_shares: number }[]) {
     if (offering.status === 'cancelled') continue;
     if (offering.status === 'closed') {
       const held = taken.get(offering.id) ?? { sold: 0, reserved: 0 };
-      total += (held.sold + held.reserved) * num(offering.share_pct);
+      total += held.sold + held.reserved;
       continue;
     }
-    total += num(offering.offered_pct);
+    total += offering.total_shares;
   }
   return total;
 }
 
-/** What is still free to offer on this project, in %. */
-export async function freePct(projectId: string, exceptId?: string): Promise<number> {
-  const taken = await pctTaken(prisma, projectId, exceptId);
-  return Math.max(0, Number((100 - taken).toFixed(6)));
+export interface ProjectRoom {
+  /** the project's own share count, or null when it has no valuation yet */
+  total_shares: number | null;
+  taken: number;
+  free: number;
+  /** the same as a percentage, for a screen that talks in percentages */
+  free_pct: number;
+}
+
+/** What is still free to offer on this project. */
+export async function roomOn(projectId: string, exceptId?: string): Promise<ProjectRoom> {
+  const project = await prisma.project.findUnique({
+    where: { id: projectId },
+    select: { total_shares: true },
+  });
+  const total = project?.total_shares ?? null;
+  const taken = await sharesTaken(prisma, projectId, exceptId);
+  const free = total === null ? 0 : Math.max(0, total - taken);
+  return {
+    total_shares: total,
+    taken,
+    free,
+    free_pct: total ? Number(((free / total) * 100).toFixed(6)) : 0,
+  };
 }
 
 /* ------------------------------------------------------------------ *
@@ -249,10 +265,9 @@ export async function freePct(projectId: string, exceptId?: string): Promise<num
 
 export interface OfferingInput {
   project_id: string;
-  net_asset_value: number;
+  /** what the owner adds on top of the project's valuation for this round */
   premium_value: number;
-  valuation_date: string;
-  offered_pct: number;
+  /** how many of the project's shares this round puts on the market */
   total_shares: number;
   /** how long it stays open once opened; worked out when a close date is given */
   validity_days?: number;
@@ -270,16 +285,39 @@ export interface OfferingInput {
   notes?: string | null;
 }
 
-type Normalised = OfferingInput & { validity_days: number };
+/** The round's terms, with what the project contributes already filled in. */
+type Normalised = OfferingInput & {
+  validity_days: number;
+  /** copied from the project */
+  net_asset_value: number;
+  valuation_date: string;
+  share_pct: number;
+  offered_pct: number;
+};
+
+/** The valuation block a round is priced from. */
+export interface ProjectValuation {
+  valuation: number;
+  total_shares: number;
+  valuation_date: string;
+  share_pct: number;
+}
 
 /**
  * A planned close date becomes the number of days it stands for, counted from
  * today — a draft opened weeks later keeps the date it was given, and its days
  * are counted again then (SHARE-SALE-FEEDBACK-PLAN.md A2).
  */
-function normalise(input: OfferingInput): Normalised {
+function normalise(input: OfferingInput, project: ProjectValuation): Normalised {
   const fee = input.late_fee_type;
-  const base: OfferingInput = {
+  const fromProject = {
+    net_asset_value: project.valuation,
+    valuation_date: project.valuation_date,
+    share_pct: project.share_pct,
+    offered_pct: Number((input.total_shares * project.share_pct).toFixed(6)),
+  };
+  const base: OfferingInput & typeof fromProject = {
+    ...fromProject,
     ...input,
     // only the chosen fee type's number is kept, so the other can never read
     // as a second fee on the same installment
@@ -308,15 +346,9 @@ function check(i: Normalised): void {
     fields[field] ??= message;
   };
 
-  if (!(i.net_asset_value > 0)) {
-    fail('net_asset_value', 'What the project’s assets are worth, less what it owes.');
-  }
   if (!(i.premium_value >= 0)) fail('premium_value', 'The premium cannot be negative.');
-  if (!(i.offered_pct > 0 && i.offered_pct <= 100)) {
-    fail('offered_pct', 'Offer more than 0% and at most 100% of the project.');
-  }
   if (!(whole(i.total_shares) && i.total_shares >= 1)) {
-    fail('total_shares', 'How many equal shares the offered % is split into.');
+    fail('total_shares', 'How many of the project’s shares this round offers.');
   }
   if (!(whole(i.validity_days) && i.validity_days >= 1 && i.validity_days <= 365)) {
     fail('validity_days', 'The offer has to close within a year — 1 to 365 days.');
@@ -349,8 +381,8 @@ function check(i: Normalised): void {
   if (!(whole(i.hold_days) && i.hold_days >= 1 && i.hold_days <= 60)) {
     fail('hold_days', 'Reserved shares are held for 1 to 60 days.');
   }
-  if (offeringMath(i).price_per_share < 1) {
-    fail('total_shares', 'The price per share works out below ৳1 — offer fewer shares.');
+  if (priceOf(i) < 1) {
+    fail('premium_value', 'A share of this project works out below ৳1.');
   }
 
   if (Object.keys(fields).length > 0) {
@@ -358,11 +390,30 @@ function check(i: Normalised): void {
   }
 }
 
-/** A round can only be written against a project that is selling. */
-async function assertProjectSells(client: Tx, projectId: string): Promise<void> {
+/**
+ * What one share costs in this round: the project's valuation plus this
+ * round's premium, times the fraction one share owns.
+ *
+ * `offeringMath` in `lib/domain/share-sale.ts` is the same sum written for the
+ * form, which splits a percentage into shares. Here the share size comes from
+ * the project instead, so the price is taken straight from it.
+ */
+function priceOf(i: { net_asset_value: number; premium_value: number; share_pct: number }): number {
+  return Math.round(((i.net_asset_value + i.premium_value) * i.share_pct) / 100);
+}
+
+/** The project's valuation block, or the reason a round cannot be priced. */
+async function valuationOf(client: Tx, projectId: string): Promise<ProjectValuation> {
   const project = await client.project.findUnique({
     where: { id: projectId },
-    select: { id: true, sales_status: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      sales_status: true,
+      valuation: true,
+      total_shares: true,
+      valuation_date: true,
+    },
   });
   if (!project) throw invalid('That project no longer exists.', { project_id: 'Pick a project.' });
   if (project.sales_status === 'not_open') {
@@ -370,37 +421,46 @@ async function assertProjectSells(client: Tx, projectId: string): Promise<void> 
       `${project.name} is not selling yet. Open its sales before offering a round of shares.`,
     );
   }
+  if (!project.valuation || !project.total_shares || !project.valuation_date) {
+    throw conflict(
+      `${project.name} has no valuation yet. Set what it is worth and how many shares it is divided into on its Valuation tab first.`,
+    );
+  }
+  return {
+    valuation: num(project.valuation),
+    total_shares: project.total_shares,
+    valuation_date: day(project.valuation_date),
+    share_pct: Number((100 / project.total_shares).toFixed(6)),
+  };
 }
 
 async function assertRoomFor(
   client: Tx,
   projectId: string,
-  offeredPct: number,
+  shares: number,
+  projectShares: number,
   exceptId?: string,
 ): Promise<void> {
-  const taken = await pctTaken(client, projectId, exceptId);
-  const free = Math.max(0, Number((100 - taken).toFixed(6)));
-  // a hair of tolerance, because 33.333333 × 3 is not 100 in any base
-  if (offeredPct > free + 1e-9) {
+  const free = Math.max(0, projectShares - (await sharesTaken(client, projectId, exceptId)));
+  if (shares > free) {
     throw invalid(
-      `Only ${free}% of this project is still free to offer — the rest is in its other rounds.`,
-      { offered_pct: `At most ${free}% is left.` },
+      `Only ${free} of this project’s ${projectShares} shares are still free — the rest are in its other rounds.`,
+      { total_shares: `At most ${free} are left.` },
     );
   }
 }
 
 /** The columns a round is written with, from its terms and the maths. */
 function columnsFor(i: Normalised) {
-  const math = offeringMath(i);
   return {
     net_asset_value: new Prisma.Decimal(i.net_asset_value),
     premium_value: new Prisma.Decimal(i.premium_value),
-    valuation: new Prisma.Decimal(math.valuation),
+    valuation: new Prisma.Decimal(i.net_asset_value + i.premium_value),
     valuation_date: toDate(i.valuation_date),
-    offered_pct: new Prisma.Decimal(i.offered_pct),
+    offered_pct: new Prisma.Decimal(i.offered_pct.toFixed(6)),
     total_shares: i.total_shares,
-    share_pct: new Prisma.Decimal(math.share_pct.toFixed(6)),
-    price_per_share: new Prisma.Decimal(math.price_per_share),
+    share_pct: new Prisma.Decimal(i.share_pct.toFixed(6)),
+    price_per_share: new Prisma.Decimal(priceOf(i)),
     validity_days: i.validity_days,
     closes_on: i.closes_on ? toDate(i.closes_on) : null,
     min_shares: i.min_shares,
@@ -509,12 +569,12 @@ export async function createOffering(
   input: OfferingInput,
 ): Promise<ShareOfferingDto> {
   assertWithinScope(principal, input.project_id);
-  const i = normalise(input);
-  check(i);
 
   const row = await withTx(async (tx: Tx) => {
-    await assertProjectSells(tx, i.project_id);
-    await assertRoomFor(tx, i.project_id, i.offered_pct);
+    const valuation = await valuationOf(tx, input.project_id);
+    const i = normalise(input, valuation);
+    check(i);
+    await assertRoomFor(tx, i.project_id, i.total_shares, valuation.total_shares);
 
     const last = await tx.shareOffering.findFirst({
       where: { project_id: i.project_id },
@@ -548,9 +608,6 @@ export async function updateOffering(
   id: string,
   input: OfferingInput,
 ): Promise<ShareOfferingDto> {
-  const i = normalise(input);
-  check(i);
-
   const row = await withTx(async (tx: Tx) => {
     const current = await tx.shareOffering.findUnique({
       where: { id },
@@ -563,10 +620,14 @@ export async function updateOffering(
         'Only a draft can be changed. Close this round and open a new one instead.',
       );
     }
-    if (current.project_id !== i.project_id) {
+    if (current.project_id !== input.project_id) {
       throw conflict('A round cannot be moved to another project.');
     }
-    await assertRoomFor(tx, i.project_id, i.offered_pct, id);
+
+    const valuation = await valuationOf(tx, input.project_id);
+    const i = normalise(input, valuation);
+    check(i);
+    await assertRoomFor(tx, i.project_id, i.total_shares, valuation.total_shares, id);
 
     return tx.shareOffering.update({
       where: { id },
@@ -598,7 +659,8 @@ export async function openOffering(
         id: true,
         status: true,
         project_id: true,
-        offered_pct: true,
+        total_shares: true,
+        premium_value: true,
         closes_on: true,
         validity_days: true,
       },
@@ -607,8 +669,31 @@ export async function openOffering(
     assertWithinScope(principal, current.project_id);
     if (current.status !== 'draft') throw conflict('Only a draft can be opened.');
 
-    await assertProjectSells(tx, current.project_id);
-    await assertRoomFor(tx, current.project_id, num(current.offered_pct), id);
+    const valuation = await valuationOf(tx, current.project_id);
+    await assertRoomFor(tx, current.project_id, current.total_shares, valuation.total_shares, id);
+
+    /*
+     * The project's valuation is copied again here, not only when the draft
+     * was written: this is the moment the round becomes a promise, so it is
+     * the moment the price is fixed. A draft prepared before a revaluation
+     * would otherwise go to the market at a price the project no longer
+     * stands behind — and from now on the project's valuation is locked, so
+     * this copy and the project agree for good.
+     */
+    const priced = {
+      net_asset_value: new Prisma.Decimal(valuation.valuation),
+      valuation: new Prisma.Decimal(valuation.valuation + num(current.premium_value)),
+      valuation_date: toDate(valuation.valuation_date),
+      share_pct: new Prisma.Decimal(valuation.share_pct.toFixed(6)),
+      offered_pct: new Prisma.Decimal((current.total_shares * valuation.share_pct).toFixed(6)),
+      price_per_share: new Prisma.Decimal(
+        priceOf({
+          net_asset_value: valuation.valuation,
+          premium_value: num(current.premium_value),
+          share_pct: valuation.share_pct,
+        }),
+      ),
+    };
 
     const planned = dayOrNull(current.closes_on);
     const closesDay =
@@ -629,6 +714,7 @@ export async function openOffering(
     return tx.shareOffering.update({
       where: { id },
       data: {
+        ...priced,
         status: 'open',
         opens_on: toDate(opens_on),
         closes_on: toDate(closesDay),

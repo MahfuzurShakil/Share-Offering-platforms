@@ -6,6 +6,7 @@ import { useState, type ReactNode } from 'react';
 import { ArrowLeft, Globe, Pencil, Star, Trash2 } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
 import { ProjectGalleryPanel } from '@/components/admin/projects/ProjectGalleryPanel';
+import { ProjectValuationTab } from '@/components/admin/projects/ProjectValuationTab';
 import { ProjectSalesCard } from '@/components/admin/projects/ProjectSalesCard';
 import { RevenueTab } from '@/components/admin/revenue/RevenueTab';
 import { Badge } from '@/components/ui/Badge';
@@ -21,9 +22,9 @@ import { projectKeys, projectsApi } from '@/lib/api/projects';
 import { messageOf } from '@/lib/api/client';
 import { useApi, useApiMutation } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
-import { formatDate } from '@/lib/utils/format';
+import { formatBdt, formatDate } from '@/lib/utils/format';
 
-type Tab = 'overview' | 'revenue' | 'documents';
+type Tab = 'overview' | 'valuation' | 'revenue' | 'documents';
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -79,6 +80,9 @@ export default function ProjectDetailPage() {
 
   const tabs: { key: Tab; label: string }[] = [
     { key: 'overview', label: 'Overview' },
+    // what the project is worth and how many shares it is cut into: the thing
+    // every share offering is priced from (PROJECT-SHARE-SALE-PLAN.md §4.1)
+    { key: 'valuation', label: 'Valuation' },
     // REVENUE-SHARE-PLAN.md — a project that earns money shares its profit
     { key: 'revenue', label: 'Income & Profit' },
     { key: 'documents', label: 'Documents' },
@@ -155,10 +159,13 @@ export default function ProjectDetailPage() {
                   />
                   {/* Scope v3 §3.3 — who runs this project */}
                   <Row label="Project manager" value={project.project_manager_name} />
-                  <Row label="Sales start" value={formatDate(project.expected_start_date)} />
                   <Row
-                    label="Target sell-out"
-                    value={formatDate(project.expected_completion_date)}
+                    label="Valuation"
+                    value={
+                      project.valuation
+                        ? `${formatBdt(project.valuation)} · ${project.total_shares} shares`
+                        : 'Not set yet'
+                    }
                   />
                 </Card>
 
@@ -183,6 +190,8 @@ export default function ProjectDetailPage() {
                 )}
               </div>
             )}
+
+            {tab === 'valuation' && <ProjectValuationTab project={project} mayEdit={mayEdit} />}
 
             {tab === 'revenue' && <RevenueTab projectId={project.id} mayEdit={mayEdit} />}
 

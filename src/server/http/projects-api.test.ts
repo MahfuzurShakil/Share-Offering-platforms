@@ -359,6 +359,49 @@ suite('projects API', () => {
     expect(await db.userProjectAssignment.count({ where: { project_id: id } })).toBe(0);
   });
 
+  it('takes a valuation only as a whole, usable one', async () => {
+    const { body } = await create({ name: 'Green Court' });
+    const id = body.data.id as string;
+
+    // a value with no share count cannot price a share
+    const half = await patchProject(
+      req('PATCH', `/api/v1/projects/${id}`, { body: { valuation: 1_000_000_000 }, token }),
+      ctx(id),
+    );
+    expect(half.status).toBe(422);
+    expect(((await half.json()) as { error: { fields: Json } }).error.fields).toHaveProperty(
+      'total_shares',
+    );
+
+    // nor can a share worth less than a taka
+    const tooMany = await patchProject(
+      req('PATCH', `/api/v1/projects/${id}`, {
+        body: { valuation: 1000, total_shares: 5000, valuation_date: '2026-12-01' },
+        token,
+      }),
+      ctx(id),
+    );
+    expect(tooMany.status).toBe(422);
+
+    const whole = await patchProject(
+      req('PATCH', `/api/v1/projects/${id}`, {
+        body: { valuation: 1_000_000_000, total_shares: 1000, valuation_date: '2026-12-01' },
+        token,
+      }),
+      ctx(id),
+    );
+    expect(whole.status).toBe(200);
+    expect(((await whole.json()) as { data: Json }).data).toMatchObject({
+      valuation: 1_000_000_000,
+      total_shares: 1000,
+      // what one share of this project owns, for every round to copy
+      share_pct: 0.1,
+      shares_offered: 0,
+      shares_free: 1000,
+      valuation_locked: false,
+    });
+  });
+
   it('rejects a body that is not valid, naming the fields', async () => {
     const { response, body } = await create({
       name: 'x',

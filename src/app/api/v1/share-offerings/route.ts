@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import { requirePerm } from '@/server/auth/rbac';
 import { created, handler, ok, readJson, readQuery } from '@/server/http/respond';
-import { createOffering, freePct, listOfferings } from '@/server/services/share-offering.service';
+import { createOffering, listOfferings, roomOn } from '@/server/services/share-offering.service';
 import { OfferingBody } from './schema';
 
 const Query = z.object({
@@ -10,23 +10,23 @@ const Query = z.object({
   search: z.string().max(200).optional(),
   page: z.coerce.number().int().positive().optional(),
   page_size: z.coerce.number().int().positive().max(200).optional(),
-  /** ask instead for how much of a project is still free to offer */
+  /** ask instead how many of a project's shares are still free to offer */
   free_for_project: z.string().uuid().optional(),
   /** the round being edited, which does not count against its own project */
   except: z.string().uuid().optional(),
 });
 
 /**
- * The rounds, or — with `free_for_project` — how much of a project is still
- * unoffered, which is what the form needs before it can let a percentage be
- * typed. Both are reads of the same thing, so they share the route.
+ * The rounds, or — with `free_for_project` — how many of a project's shares
+ * are still unoffered, which is what the form needs before it can let a number
+ * of shares be typed. Both are reads of the same thing, so they share a route.
  */
 export const GET = handler(async (request) => {
   const principal = await requirePerm(request, 'share_sale', 'view');
   const q = readQuery(request, Query);
 
   if (q.free_for_project) {
-    return ok({ free_pct: await freePct(q.free_for_project, q.except) });
+    return ok(await roomOn(q.free_for_project, q.except));
   }
 
   const page = await listOfferings(
