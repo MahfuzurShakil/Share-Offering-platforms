@@ -9,7 +9,7 @@ export default function NewCustomerPage() {
     <>
       <PageHeader
         title="Add Customer"
-        subtitle="A buyer who did not come through Leads. A lead becomes a customer by booking it — use Book a unit on the lead."
+        subtitle="An investor's file: who they are, what the agreement will need, and where their profit is sent. A code (CUST-YYYY-NNN) is given on save."
       />
       {/* the form reads search params, which needs a Suspense boundary */}
       <Suspense fallback={<p className="text-sm text-ink-muted">Loading…</p>}>

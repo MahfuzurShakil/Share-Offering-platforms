@@ -3,39 +3,28 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import {
-  ArrowLeft,
-  CircleUserRound,
-  Pencil,
-  PieChart,
-  Receipt,
-  Trash2,
-  UserRound,
-} from 'lucide-react';
+import { ArrowLeft, CircleUserRound, Pencil, PieChart, Trash2, UserRound } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
-import { CustomerShareFile } from '@/components/admin/share-sale/ShareDocuments';
-import { CustomerEarnings } from '@/components/admin/revenue/CustomerEarnings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { ResultDialog } from '@/components/ui/ResultDialog';
-import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { LEAD_STATUS_META } from '@/lib/domain/lead';
-import { SALE_HEALTH_META, formatSharePct } from '@/lib/domain/share-sale';
-import { useSession } from '@/lib/auth/session';
-import {
-  customerPortfolioRepository,
-  customerRepository,
-  customerShareFile,
-  type MoneyTotals,
-} from '@/lib/repositories';
+import { messageOf } from '@/lib/api/client';
+import { customerKeys, customersApi } from '@/lib/api/customers';
+import { useApi, useApiMutation } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate, formatPhone } from '@/lib/utils/format';
 
-type Tab = 'overview' | 'shares' | 'earnings' | 'payments' | 'documents';
+/*
+ * Shares, Earnings and Payments are not here yet: each is a view over this
+ * investor's purchases and the receipts against them, which move to Postgres
+ * in the next batch. What is already true from the database is the roll-up in
+ * `customer.holdings` — how many purchases, what they are worth, what has been
+ * paid — so the person's own page is not silent about their money meanwhile.
+ */
+type Tab = 'overview' | 'documents';
 
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
@@ -47,29 +36,13 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-function MoneyCard({ title, m }: { title: string; m: MoneyTotals }) {
-  const pct = m.value > 0 ? Math.min(100, (m.received / m.value) * 100) : 0;
-  return (
-    <Card>
-      <CardHeader title={title} />
-      <Row label="Total value" value={formatBdt(m.value)} />
-      <Row label="Paid" value={<span className="text-emerald-700">{formatBdt(m.received)}</span>} />
-      <Row label="Balance" value={formatBdt(m.balance)} />
-      <Row label="Overdue now" value={m.overdue > 0.5 ? <span className="text-red-600">{formatBdt(m.overdue)}</span> : 'Nothing'} />
-      {m.value > 0 && (
-        <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-          <div className="h-full rounded-full bg-emerald-500" style={{ width: `${pct}%` }} />
-        </div>
-      )}
-    </Card>
-  );
-}
-
 /**
- * Customer detail — Design Reference A.11, for both kinds of customer
- * (BUYER-PORTAL-PLAN.md §4). Tabs appear for what the customer holds: Flats &
- * Plots for a buyer, Shares for an investor, both for someone who is both,
- * with one Payments ledger and one papers file across them.
+ * Customer detail — Design Reference A.11.
+ *
+ * One investor's file: who they are, what the agreement names them as, where
+ * their profit is sent, and their papers. What they hold is summed by the
+ * database and shown at the top; the purchase-by-purchase view returns with
+ * the purchases batch.
  */
 export default function CustomerDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -78,13 +51,11 @@ export default function CustomerDetailPage() {
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [deleteError, setDeleteError] = useState('');
 
-  const customer = useLiveQuery(() => customerRepository.getWithRelations(id), [id]);
-  const holdings = useLiveQuery(() => customerPortfolioRepository.forCustomer(id), [id]);
-  const shareFile = useLiveQuery(() => customerShareFile(id), [id]);
-  const { can } = useSession();
+  const customer = useApi(customerKeys.one(id), (signal) => customersApi.get(id, signal));
+  const remove = useApiMutation(() => customersApi.remove(id), [customerKeys.all]);
 
-  if (customer === undefined || holdings === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!customer || !holdings) {
+  if (customer === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
+  if (!customer) {
     return (
       <Card>
         <p className="text-sm text-ink-muted">This customer no longer exists.</p>
@@ -97,15 +68,11 @@ export default function CustomerDetailPage() {
     );
   }
 
-  const { portfolio, shares, payments } = holdings;
-  const isInvestor = portfolio.is_investor || shares.length > 0;
+  const held = customer.holdings;
+  const isInvestor = held.purchases > 0;
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'overview', label: 'Overview', show: true },
-    { key: 'shares', label: `Shares (${shares.length})`, show: true },
-    // REVENUE-SHARE-PLAN.md §5.4 — profit shared from their holdings
-    { key: 'earnings', label: 'Earnings', show: isInvestor },
-    { key: 'payments', label: `Payments (${payments.length})`, show: payments.length > 0 },
     { key: 'documents', label: 'Documents', show: true },
   ];
 
@@ -162,17 +129,20 @@ export default function CustomerDetailPage() {
 
           {tab === 'overview' && (
             <div className="space-y-5">
-              {portfolio.total.count > 0 && (
+              {isInvestor && (
                 <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
-                  <Tile label="Total value" value={formatBdt(portfolio.total.value)} hint={`${portfolio.total.count} holding${portfolio.total.count === 1 ? '' : 's'}`} />
-                  <Tile label="Paid" value={formatBdt(portfolio.total.received)} tone="green" hint="toward the price" />
-                  <Tile label="Balance" value={formatBdt(portfolio.total.balance)} hint="still to come" />
                   <Tile
-                    label="Overdue"
-                    value={portfolio.total.overdue > 0.5 ? formatBdt(portfolio.total.overdue) : 'Nothing'}
-                    tone={portfolio.total.overdue > 0.5 ? 'red' : undefined}
-                    hint="incl. late fees"
+                    label="Total value"
+                    value={formatBdt(held.value)}
+                    hint={`${held.purchases} purchase${held.purchases === 1 ? '' : 's'}`}
                   />
+                  <Tile
+                    label="Shares held"
+                    value={String(held.shares)}
+                    hint="across every project"
+                  />
+                  <Tile label="Paid" value={formatBdt(held.paid)} tone="green" hint="toward the price" />
+                  <Tile label="Balance" value={formatBdt(held.due)} hint="still to come" />
                 </div>
               )}
               <Card>
@@ -206,142 +176,39 @@ export default function CustomerDetailPage() {
                   }
                 />
                 <Row label="NID" value={customer.nid} />
+                <Row label="e-TIN" value={customer.tin} />
                 <Row label="Father’s / spouse’s name" value={customer.father_or_spouse_name} />
                 <Row label="Profession" value={customer.profession} />
-                <Row label="Address" value={customer.address} />
+                <Row label="Date of birth" value={formatDate(customer.date_of_birth)} />
+                <Row label="Present address" value={customer.address} />
+                <Row label="Permanent address" value={customer.permanent_address} />
                 <Row
                   label="Nominee"
                   value={customer.nominee_name ? `${customer.nominee_name}${customer.nominee_relation ? ` (${customer.nominee_relation})` : ''}` : null}
+                />
+                <Row
+                  label="Bank account"
+                  value={
+                    customer.bank_account
+                      ? `${customer.bank_name ?? ''} ${customer.bank_branch ?? ''} · ${customer.bank_account}`.trim()
+                      : null
+                  }
                 />
                 <Row label="Customer since" value={formatDate(customer.created_at)} />
               </Card>
             </div>
           )}
 
-          {tab === 'shares' && (
-            <Card>
-              <CardHeader
-                title="Shares"
-                action={
-                  <Link href="/admin/share-sale">
-                    <Button size="sm">
-                      <PieChart className="size-4" /> Reserve shares
-                    </Button>
-                  </Link>
-                }
-              />
-              {shares.length === 0 ? (
-                <EmptyState icon={PieChart} title="No share purchase yet" description="Reserve shares for this customer from an open offering." />
-              ) : (
-                <ul className="space-y-3">
-                  {shares.map(({ view, offering, project }) => {
-                    const s = view.sale;
-                    return (
-                      <li key={s.id}>
-                        <Link
-                          href={`/admin/share-sale/sales/${s.id}?from=customer`}
-                          className="flex flex-wrap items-center gap-3 rounded-xl border border-hairline p-3 transition-colors hover:bg-admin-50/60"
-                        >
-                          <span className="grid size-10 shrink-0 place-items-center rounded-full bg-admin-50 text-admin-600">
-                            <PieChart className="size-5" />
-                          </span>
-                          <div className="min-w-0 flex-1">
-                            <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
-                              {s.code}
-                              {project && <span className="text-ink-muted">· {project.name}</span>}
-                              {offering && <span className="text-ink-muted">· {offering.code}</span>}
-                            </p>
-                            <p className="text-xs text-ink-muted">
-                              {s.shares} shares ({formatSharePct(s.share_pct)}) · {formatBdt(s.total_price)} · {formatBdt(view.paid)} paid
-                              {view.due_now > 0.5 && <span className="text-red-600"> · {formatBdt(view.due_now)} overdue</span>}
-                            </p>
-                            <div className="mt-2 h-1.5 max-w-xs overflow-hidden rounded-full bg-slate-100">
-                              <div className="h-full rounded-full bg-emerald-500" style={{ width: `${view.progress_pct}%` }} />
-                            </div>
-                          </div>
-                          <Badge tone={SALE_HEALTH_META[view.health].tone}>{SALE_HEALTH_META[view.health].label}</Badge>
-                        </Link>
-                        {s.signing && (
-                          <Link href={`/admin/share-sale/sales/${s.id}?from=customer&tab=agreement`} className="mt-1 ml-[3.75rem] inline-block text-xs font-medium text-admin-700 hover:underline">
-                            View agreement {s.agreement_no}
-                          </Link>
-                        )}
-                      </li>
-                    );
-                  })}
-                </ul>
-              )}
-            </Card>
-          )}
-
-          {tab === 'payments' && (
-            <Card>
-              <CardHeader title="Payments" subtitle="Every receipt across this customer's bookings and share purchases, newest first." />
-              <div className="overflow-x-auto">
-                <table className="w-full min-w-[620px] text-sm">
-                  <thead>
-                    <tr className="border-b border-hairline text-left text-xs uppercase tracking-wide text-ink-muted">
-                      <th className="py-2 pr-3">Date</th>
-                      <th className="py-2 pr-3">For</th>
-                      <th className="py-2 pr-3 text-right">Amount</th>
-                      <th className="py-2 pr-3 text-right">Late fee</th>
-                      <th className="py-2 pr-3">Reference</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {payments.map((p) => (
-                      <tr key={p.id} className="border-b border-hairline last:border-0">
-                        <td className="py-2.5 pr-3 text-ink">{formatDate(p.date)}</td>
-                        <td className="py-2.5 pr-3">
-                          <Link href={p.href} className="inline-flex items-center gap-1.5 text-admin-700 hover:underline">
-                            <PieChart className="size-3.5" />
-                            {p.against}
-                          </Link>
-                          {p.online && (
-                            <Badge tone="blue" className="ml-1.5">
-                              Online
-                            </Badge>
-                          )}
-                        </td>
-                        <td className="py-2.5 pr-3 text-right font-medium tabular-nums">{formatBdt(p.amount)}</td>
-                        <td className="py-2.5 pr-3 text-right tabular-nums text-ink-muted">{p.late_fee ? formatBdt(p.late_fee) : '—'}</td>
-                        <td className="py-2.5 pr-3 text-ink-muted">{p.reference || '—'}</td>
-                      </tr>
-                    ))}
-                  </tbody>
-                  <tfoot>
-                    <tr className="text-sm font-semibold text-ink">
-                      <td className="pt-3" colSpan={2}>
-                        Total
-                      </td>
-                      <td className="pt-3 pr-3 text-right">{formatBdt(payments.reduce((t, p) => t + p.amount, 0))}</td>
-                      <td colSpan={2} />
-                    </tr>
-                  </tfoot>
-                </table>
-              </div>
-            </Card>
-          )}
-
-          {tab === 'earnings' && <CustomerEarnings customerId={id} />}
-
           {/* one Documents tab in one design (feedback D3): the customer file, then anything else on the customer */}
           {tab === 'documents' && (
             <Card>
               <CardHeader title="Documents" subtitle="KYC papers and each share purchase's papers — the customer sees these on their Customer Portal." />
-              {shareFile && (
-                <CustomerShareFile
-                  customerId={customer.id}
-                  uploads={shareFile.uploads}
-                  sales={shareFile.sales}
-                  bookings={[]}
-                  mayEdit={can('share_sale', 'edit')}
-                />
-              )}
-              <section className="mt-6 border-t border-hairline pt-5">
-                <h4 className="mb-3 text-sm font-semibold text-ink">Other documents</h4>
-                <DocumentsPanel entityType="customer" entityId={customer.id} />
-              </section>
+              {/*
+                The purchase-by-purchase checklist (NID to sign, deed, receipts)
+                comes back with the purchases batch; what is here meanwhile is
+                the customer's own file.
+              */}
+              <DocumentsPanel entityType="customer" entityId={customer.id} />
             </Card>
           )}
         </div>
@@ -367,7 +234,7 @@ export default function CustomerDetailPage() {
             </div>
           </Card>
 
-          {isInvestor && <MoneyCard title="Shares" m={portfolio.shares} />}
+
 
           {isInvestor && (
             <Card>
@@ -380,27 +247,10 @@ export default function CustomerDetailPage() {
             </Card>
           )}
 
-          {customer.lead && (
-            <Card>
-              <CardHeader title="Origin" />
-              <Link
-                href={`/admin/leads/${customer.lead.id}`}
-                className="flex items-center justify-between gap-3 rounded-xl border border-hairline p-3 text-sm transition-colors hover:bg-admin-50/60"
-              >
-                <span className="min-w-0">
-                  <span className="block truncate font-medium text-ink">{customer.lead.code}</span>
-                  <span className="block text-xs text-ink-muted">Converted from this lead</span>
-                </span>
-                <Badge tone={LEAD_STATUS_META[customer.lead.status].tone}>{LEAD_STATUS_META[customer.lead.status].label}</Badge>
-              </Link>
-            </Card>
-          )}
-
-          {payments.length > 0 && tab !== 'payments' && (
-            <Button variant="outline" className="w-full" onClick={() => setTab('payments')}>
-              <Receipt className="size-4" /> All payments
-            </Button>
-          )}
+          {/*
+            Where this investor came from (the lead they were converted from)
+            returns with the CRM batch, which still reads the interim layer.
+          */}
         </aside>
       </div>
 
@@ -412,15 +262,16 @@ export default function CustomerDetailPage() {
         message="This deletes the customer record and its documents. It cannot be undone."
         tone="danger"
         onCancel={() => setConfirmDelete(false)}
+        busy={remove.isPending}
         onConfirm={async () => {
-          const result = await customerRepository.removeCascade(customer.id);
-          if (!result.removed) {
+          try {
+            await remove.mutateAsync(undefined);
+            router.push('/admin/customers');
+          } catch (error) {
             // refused: close the question and say why, in a notice of its own
             setConfirmDelete(false);
-            setDeleteError(result.reason ?? 'This customer cannot be deleted.');
-            return;
+            setDeleteError(messageOf(error));
           }
-          router.push('/admin/customers');
         }}
       />
 

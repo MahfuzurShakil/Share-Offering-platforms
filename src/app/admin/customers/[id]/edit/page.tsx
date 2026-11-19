@@ -2,17 +2,21 @@
 
 import { Suspense } from 'react';
 import { useParams } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { CustomerForm } from '@/components/admin/customers/CustomerForm';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { customerRepository } from '@/lib/repositories';
+import { customerKeys, customersApi } from '@/lib/api/customers';
+import { useApiQuery } from '@/lib/api/use-api';
 
 export default function EditCustomerPage() {
   const { id } = useParams<{ id: string }>();
-  const customer = useLiveQuery(() => customerRepository.getWithRelations(id), [id]);
+  const { data: customer, isPending, isError } = useApiQuery(customerKeys.one(id), (signal) =>
+    customersApi.get(id, signal),
+  );
 
-  if (customer === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!customer) return <p className="text-sm text-ink-muted">This customer no longer exists.</p>;
+  if (isPending) return <p className="text-sm text-ink-muted">Loading…</p>;
+  if (isError || !customer) {
+    return <p className="text-sm text-ink-muted">This customer no longer exists.</p>;
+  }
 
   return (
     <>

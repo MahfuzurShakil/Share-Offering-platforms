@@ -1,8 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
 import { BriefcaseBusiness, Mail, PieChart, Phone, Plus, Search, UserRound } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -13,10 +12,11 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination, usePagination } from '@/components/ui/Pagination';
 import { ResultCard } from '@/components/ui/ResultCard';
 import { ResultsLayout, ViewToggle, type ViewMode } from '@/components/ui/ViewToggle';
-import { customerRepository } from '@/lib/repositories';
+import { customerKeys, customersApi } from '@/lib/api/customers';
+import { useApi } from '@/lib/api/use-api';
 import { formatBdt, formatDate, formatPhone } from '@/lib/utils/format';
 
-type SortKey = 'newest' | 'oldest' | 'name' | 'value_high' | 'bookings';
+type SortKey = 'newest' | 'oldest' | 'name' | 'value_high' | 'holdings';
 type HoldingState = 'any' | 'none' | 'active' | 'signed';
 
 const EMPTY_FILTERS = {
@@ -32,6 +32,11 @@ const EMPTY_FILTERS = {
  *
  * Phase 1 has one kind of customer: an investor holding project shares. The
  * prototype's Buyers / Investors tabs went with the flat-sale module.
+ *
+ * Filtering happens in Postgres, and what each investor holds arrives on the
+ * row already added up. Two of the sorts are still done here, over the page
+ * that came back: they sort by that roll-up, which is not a column — they
+ * become server-side when this list is paged by the server (S3).
  */
 export default function CustomersListPage() {
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -43,37 +48,33 @@ export default function CustomersListPage() {
     value: (typeof EMPTY_FILTERS)[K],
   ) => setFilters((f) => ({ ...f, [key]: value }));
 
-  const customers = useLiveQuery(
-    () => customerRepository.list(filters),
-    [filters.name, filters.phone, filters.nid, filters.profession, filters.holding_state],
+  const query = {
+    name: filters.name.trim() || undefined,
+    phone: filters.phone.trim() || undefined,
+    nid: filters.nid.trim() || undefined,
+    profession: filters.profession.trim() || undefined,
+    holding_state: filters.holding_state === 'any' ? undefined : filters.holding_state,
+    sort: sort === 'oldest' || sort === 'name' ? sort : ('newest' as const),
+    page_size: 200,
+  };
+
+  const customers = useApi(customerKeys.list(query), (signal) =>
+    customersApi.list(query, signal),
   );
-  const allCustomers = useLiveQuery(() => customerRepository.getAll(), []);
-  const portfolios = useLiveQuery(() => customerRepository.portfolios(), []);
 
-  const moneyOf = (id: string) => portfolios?.get(id);
+  /** "no customer yet" and "nothing matches" are different things to say */
+  const anyPage = useApi(customerKeys.list({ page_size: 1 }), (signal) =>
+    customersApi.page({ page_size: 1 }, signal),
+  );
 
-  const rows = useMemo(() => {
-    const list = [...(customers ?? [])];
-    const value = (id: string) => portfolios?.get(id)?.value ?? 0;
-    const count = (id: string) => portfolios?.get(id)?.count ?? 0;
-    switch (sort) {
-      case 'oldest':
-        return list.sort((a, b) => a.created_at.localeCompare(b.created_at));
-      case 'name':
-        return list.sort((a, b) => a.name.localeCompare(b.name));
-      case 'value_high':
-        return list.sort((a, b) => value(b.id) - value(a.id));
-      case 'bookings':
-        return list.sort((a, b) => count(b.id) - count(a.id));
-      default:
-        return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-  }, [customers, sort, portfolios]);
+  const rows = [...(customers ?? [])];
+  if (sort === 'value_high') rows.sort((a, b) => b.holdings.value - a.holdings.value);
+  if (sort === 'holdings') rows.sort((a, b) => b.holdings.purchases - a.holdings.purchases);
 
   const paged = usePagination(rows);
 
   const loading = customers === undefined;
-  const hasAny = (allCustomers?.length ?? 0) > 0;
+  const hasAny = (anyPage?.meta.total ?? 0) > 0;
   const filtersActive =
     Boolean(filters.name || filters.phone || filters.nid || filters.profession) ||
     filters.holding_state !== 'any';
@@ -82,7 +83,7 @@ export default function CustomersListPage() {
     <>
       <PageHeader
         title="Customers"
-        subtitle="Buyers of flats and plots, and investors holding project shares — one person can be both."
+        subtitle="The investors: one file per person, however many projects they hold shares in."
         action={
           <Link href="/admin/customers/new">
             <Button>
@@ -178,7 +179,7 @@ export default function CustomersListPage() {
                 <option value="oldest">Oldest first</option>
                 <option value="name">Name A–Z</option>
                 <option value="value_high">Highest value</option>
-                <option value="bookings">Most holdings</option>
+                <option value="holdings">Most purchases</option>
               </SelectInput>
             </div>
           </div>
@@ -199,7 +200,7 @@ export default function CustomersListPage() {
               description={
                 hasAny
                   ? 'Try a different name, phone number or NID.'
-                  : 'A customer is created when a lead commits to a unit — or add a walk-in buyer directly.'
+                  : 'An investor gets a file here before shares are reserved for them.'
               }
               action={
                 hasAny ? (
@@ -219,7 +220,7 @@ export default function CustomersListPage() {
             <>
               <ResultsLayout view={view}>
                 {paged.pageRows.map((customer) => {
-                  const m = moneyOf(customer.id);
+                  const m = customer.holdings;
                   return (
                     <ResultCard
                       key={customer.id}
@@ -242,7 +243,7 @@ export default function CustomersListPage() {
                       }
                       leading={
                         <span className="grid size-11 shrink-0 place-items-center rounded-full bg-admin-50 text-admin-600">
-                          {m && m.count > 0 ? (
+                          {m.purchases > 0 ? (
                             <PieChart className="size-5" />
                           ) : (
                             <UserRound className="size-5" />
@@ -250,7 +251,7 @@ export default function CustomersListPage() {
                         </span>
                       }
                       status={
-                        m && m.count > 0 ? (
+                        m.purchases > 0 ? (
                           <Badge tone="blue">Investor</Badge>
                         ) : (
                           <Badge tone="amber">Nothing held yet</Badge>
@@ -272,10 +273,11 @@ export default function CustomersListPage() {
                             </Badge>
                           )}
                           {customer.nid && <Badge>NID {customer.nid}</Badge>}
-                          {m && m.count > 0 && (
+                          {m.purchases > 0 && (
                             <>
                               <Badge tone="teal">
-                                {m.count} purchase{m.count === 1 ? '' : 's'}
+                                {m.purchases} purchase{m.purchases === 1 ? '' : 's'} · {m.shares}{' '}
+                                share{m.shares === 1 ? '' : 's'}
                               </Badge>
                               <Badge>{formatBdt(m.value)}</Badge>
                               <Badge tone="green">{formatBdt(m.paid)} paid</Badge>

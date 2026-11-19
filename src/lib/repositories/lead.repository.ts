@@ -17,14 +17,13 @@ import { nextCode, nowIso } from '../utils/id';
 import { BaseRepository, type NewRecord } from './base.repository';
 import { documentRepository } from './document.repository';
 
-/** Phone digits only — "01711 22 33 44" and "+8801711223344" are one buyer. */
-export function normalizePhone(phone: string): string {
-  const digits = phone.replace(/\D/g, '');
-  // BD numbers arrive as 01711…, 8801711…, or +8801711…
-  if (digits.startsWith('880')) return `0${digits.slice(3)}`;
-  if (digits.length === 10 && !digits.startsWith('0')) return `0${digits}`;
-  return digits;
-}
+/*
+ * Phone normalising moved to `domain/phone.ts`, so the server shares the one
+ * rule rather than keeping a second copy of it. Re-exported here because the
+ * screens and the other repositories import it from this module.
+ */
+import { normalizePhone } from '../domain/phone';
+export { normalizePhone };
 
 export interface LeadFilters {
   search?: string;
