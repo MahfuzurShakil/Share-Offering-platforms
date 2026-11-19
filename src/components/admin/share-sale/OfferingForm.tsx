@@ -10,7 +10,7 @@ import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/component
 import { LATE_FEE_TYPES, type LateFeeType, type ShareFrequency } from '@/lib/db/types';
 import { FREQUENCY_LABEL, LATE_FEE_TYPE_LABEL, addDays, closesOn, daysBetween, formatCrore, formatSharePct } from '@/lib/domain/share-sale';
 import { fieldErrorsOf, messageOf } from '@/lib/api/client';
-import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { projectKeys, projectsApi, type ApiProject } from '@/lib/api/projects';
 import {
   shareOfferingKeys,
   shareOfferingsApi,
@@ -40,6 +40,14 @@ interface Draft {
   grace_days: string;
   hold_days: string;
   notes: string;
+}
+
+/** Why a project cannot carry a round, in two or three words for the list. */
+function whyNotReady(p: ApiProject): string | null {
+  if (p.sales_status === 'not_open') return 'sales not open';
+  if (!p.valuation || !p.total_shares) return 'no valuation yet';
+  if (p.shares_free === 0) return 'every share is in a round';
+  return null;
 }
 
 /** How the premium is typed (feedback A1, round 2): a clear name for each choice. */
@@ -151,6 +159,16 @@ export function OfferingForm({
   const offeredPct = Number((shares * sharePct).toFixed(6));
   const free = room?.free ?? null;
   const ready = Boolean(project?.valuation && project?.total_shares);
+  /** what stops a round being written against this project, in a sentence */
+  const blocker = !project
+    ? null
+    : project.sales_status === 'not_open'
+      ? 'This project is not selling yet. Open its sales on the project page, then come back.'
+      : !ready
+        ? 'This project has no valuation yet. Set what it is worth and how many shares it is divided into on its Valuation tab.'
+        : free === 0
+          ? 'Every share of this project is already in a round. Close one to free its unsold shares.'
+          : null;
   const maxShares = Number(d.max_shares) || 0;
   const n = Number(d.max_installments) || 0;
   const downPct = Number(d.min_down_payment_pct) || 0;
@@ -219,30 +237,24 @@ export function OfferingForm({
                 disabled={!!offering}
               >
                 <option value="">Choose a project…</option>
-                {(projects ?? []).map((p) => {
-                  const why =
-                    p.sales_status === 'not_open'
-                      ? 'sales not open'
-                      : !p.valuation || !p.total_shares
-                        ? 'no valuation yet'
-                        : p.shares_free === 0
-                          ? 'every share is in a round'
-                          : null;
-                  return (
-                    <option key={p.id} value={p.id} disabled={Boolean(why) && p.id !== d.project_id}>
-                      {p.name} · {p.code}
-                      {why ? ` — ${why}` : ''}
-                    </option>
-                  );
-                })}
+                {/*
+                  Every project can be picked, including one that is not ready:
+                  an option that cannot be chosen gives the person nothing to
+                  act on. Picking it says what is missing and links to the page
+                  that fixes it, and the form will not save until it is.
+                */}
+                {(projects ?? []).map((p) => (
+                  <option key={p.id} value={p.id}>
+                    {p.name} · {p.code}
+                    {whyNotReady(p) ? ` — ${whyNotReady(p)}` : ''}
+                  </option>
+                ))}
               </SelectInput>
             </Field>
 
-            {project && !ready && (
+            {project && blocker && (
               <p className="md:col-span-2 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
-                {project.sales_status === 'not_open'
-                  ? 'This project is not selling yet. Open its sales on the project page first.'
-                  : 'This project has no valuation yet.'}{' '}
+                {blocker}{' '}
                 <Link
                   href={`/admin/projects/${project.id}`}
                   className="font-medium underline underline-offset-2"
@@ -349,6 +361,16 @@ export function OfferingForm({
                 onChange={(e) => set('total_shares', e.target.value)}
                 placeholder="e.g. 500"
               />
+            </Field>
+            {/*
+              The percentage used to be typed here beside the share count,
+              which let the two disagree. It is the share count times what one
+              share owns now, so it is shown rather than asked.
+            */}
+            <Field label="That is, of the project" hint="Worked out from the project's shares">
+              <div className="flex h-[42px] items-center rounded-xl border border-hairline bg-slate-50/60 px-3 text-sm font-semibold tabular-nums text-admin-700">
+                {shares > 0 && sharePct > 0 ? formatSharePct(offeredPct) : '—'}
+              </div>
             </Field>
             <Field label="Offer closes on" required error={fields.closes_on} hint={openDays ? `Open ${openDays} days if opened today` : 'Pick a day after today'}>
               <TextInput type="date" value={d.closes_on} min={addDays(today, 1)} max={addDays(today, 364)} onChange={(e) => set('closes_on', e.target.value)} />

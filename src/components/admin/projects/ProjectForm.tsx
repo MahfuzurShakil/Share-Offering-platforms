@@ -8,8 +8,6 @@ import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Checkbox, Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { useBlobUrl } from '@/components/ui/useBlobUrl';
-import { LAND_SIZE_UNITS, type LandSizeUnit } from '@/lib/db/types';
-import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
 import { fieldErrorsOf, messageOf } from '@/lib/api/client';
 import {
   assignableUserKeys,
@@ -24,13 +22,45 @@ import { documentRepository, lookupRepository } from '@/lib/repositories';
 interface FormState {
   name: string;
   description: string;
+  project_type: ApiProject['project_type'];
+  income_type: ApiProject['income_type'];
+  expected_hold_months: string;
   location_summary: string;
-  total_land_area: string;
-  total_land_area_unit: LandSizeUnit;
   project_manager: string;
   construction_after_sale: ApiProject['construction_after_sale'];
   surroundings: string;
 }
+
+/**
+ * What kind of thing is being sold in shares.
+ *
+ * Every project in this build is sold as shares, so the picker was left out at
+ * first — but what the shares are *of* is the first line of any listing, and
+ * the column was already there, defaulting everything to land.
+ */
+const PROJECT_TYPE_OPTIONS: Record<ApiProject['project_type'], string> = {
+  land_share: 'Land held as shares',
+  plot_development: 'Plot development',
+  apartment: 'Apartment building',
+  commercial: 'Commercial building',
+  mixed: 'Mixed use',
+};
+
+/**
+ * Where the money comes from.
+ *
+ * On every fractional-investment listing worth reading this sits next to the
+ * price, because it is what the investor is actually buying: rent, a resale,
+ * or a business run on the asset. The profit-sharing module books income
+ * against it (REVENUE-SHARE-PLAN.md).
+ */
+const INCOME_TYPE_LABEL: Record<ApiProject['income_type'], string> = {
+  rent: 'Rent or lease income',
+  resale: 'Selling the land or the units on',
+  operation: 'A business run on it — hotel, market, warehouse',
+  mixed: 'More than one of these',
+  undecided: 'Not decided yet',
+};
 
 /**
  * What happens to the land once its shares are sold.
@@ -48,9 +78,10 @@ const AFTER_SALE_LABEL: Record<ApiProject['construction_after_sale'], string> = 
 const EMPTY: FormState = {
   name: '',
   description: '',
+  project_type: 'land_share',
+  income_type: 'undecided',
+  expected_hold_months: '',
   location_summary: '',
-  total_land_area: '',
-  total_land_area_unit: 'katha',
   project_manager: '',
   construction_after_sale: 'undecided',
   surroundings: '',
@@ -62,9 +93,10 @@ function toFormState(p: ApiProject): FormState {
   return {
     name: p.name,
     description: str(p.description),
+    project_type: p.project_type,
+    income_type: p.income_type,
+    expected_hold_months: str(p.expected_hold_months),
     location_summary: str(p.location_summary),
-    total_land_area: str(p.total_land_area),
-    total_land_area_unit: p.total_land_area_unit ?? 'katha',
     project_manager: str(p.project_manager_id),
     construction_after_sale: p.construction_after_sale,
     surroundings: str(p.surroundings),
@@ -124,9 +156,6 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = 'Project name is required';
-    if (form.total_land_area.trim() && !(Number(form.total_land_area) > 0)) {
-      next.total_land_area = 'Enter the area as a number, or leave it blank';
-    }
     setErrors(next);
     return Object.keys(next).length === 0;
   }
@@ -136,13 +165,15 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
     if (!validate()) return;
     setSaving(true);
     try {
-      const area = form.total_land_area.trim() ? Number(form.total_land_area) : null;
       const payload = {
         name: form.name.trim(),
         description: form.description.trim() || null,
+        project_type: form.project_type,
+        income_type: form.income_type,
+        expected_hold_months: form.expected_hold_months.trim()
+          ? Number(form.expected_hold_months)
+          : null,
         location_summary: form.location_summary.trim() || null,
-        total_land_area: area,
-        total_land_area_unit: area === null ? null : form.total_land_area_unit,
         project_manager_id: form.project_manager || null,
         construction_after_sale: form.construction_after_sale,
         surroundings: form.surroundings.trim() || null,
@@ -209,6 +240,18 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
               invalid={Boolean(errors.name)}
             />
           </Field>
+          <Field label="What is being sold in shares" required>
+            <SelectInput
+              value={form.project_type}
+              onChange={(e) => set('project_type', e.target.value as FormState['project_type'])}
+            >
+              {(Object.keys(PROJECT_TYPE_OPTIONS) as FormState['project_type'][]).map((k) => (
+                <option key={k} value={k}>
+                  {PROJECT_TYPE_OPTIONS[k]}
+                </option>
+              ))}
+            </SelectInput>
+          </Field>
           <Field label="Project manager">
             <SelectInput
               value={form.project_manager}
@@ -256,30 +299,40 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
       {/* 2 — the land it stands on, and the selling window */}
       <Card>
         <CardHeader
-          title="The land, and what happens to it"
-          subtitle="The land is a fact about the project here; buying land is not part of this phase. When shares go on sale, and for how long, belongs to each share offering."
+          title="What an investor is buying"
+          subtitle="Where the money comes from, how long they should expect to hold, and what happens to the land once its shares are sold. When shares go on sale, and for how long, belongs to each share offering."
         />
         <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-4">
-          <Field label="Total land area" error={errors.total_land_area} hint="Optional">
-            <TextInput
-              inputMode="decimal"
-              value={form.total_land_area}
-              onChange={(e) => set('total_land_area', e.target.value.replace(/[^\d.]/g, ''))}
-              placeholder="e.g. 12.5"
-              invalid={Boolean(errors.total_land_area)}
-            />
-          </Field>
-          <Field label="Unit">
+          <Field
+            label="How this project earns"
+            className="md:col-span-2"
+            hint="What the shareholders' profit will be shared out of."
+          >
             <SelectInput
-              value={form.total_land_area_unit}
-              onChange={(e) => set('total_land_area_unit', e.target.value as LandSizeUnit)}
+              value={form.income_type}
+              onChange={(e) => set('income_type', e.target.value as FormState['income_type'])}
             >
-              {LAND_SIZE_UNITS.map((u) => (
-                <option key={u} value={u}>
-                  {LAND_SIZE_UNIT_LABEL[u]}
+              {(Object.keys(INCOME_TYPE_LABEL) as FormState['income_type'][]).map((k) => (
+                <option key={k} value={k}>
+                  {INCOME_TYPE_LABEL[k]}
                 </option>
               ))}
             </SelectInput>
+          </Field>
+          <Field
+            label="Expected holding period"
+            className="md:col-span-2"
+            hint="In months. Leave it empty if the shares are open-ended."
+          >
+            <TextInput
+              type="number"
+              min="0"
+              max="600"
+              step="1"
+              value={form.expected_hold_months}
+              onChange={(e) => set('expected_hold_months', e.target.value)}
+              placeholder="e.g. 36"
+            />
           </Field>
           <Field
             label="After the shares are sold"

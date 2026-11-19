@@ -39,6 +39,8 @@ const ADMIN_SELECT = {
   total_land_area: true,
   total_land_area_unit: true,
   description: true,
+  income_type: true,
+  expected_hold_months: true,
   location_summary: true,
   valuation: true,
   total_shares: true,
@@ -74,6 +76,9 @@ export interface ProjectDto {
   total_land_area: number | null;
   total_land_area_unit: string | null;
   description: string | null;
+  /** where the money comes from: rent, resale, a business run on it, a mix */
+  income_type: string;
+  expected_hold_months: number | null;
   location_summary: string | null;
   /** what 100% of the project is worth, and into how many shares it is cut */
   valuation: number | null;
@@ -131,6 +136,8 @@ function toDto(row: ProjectRow, use: ValuationUse = { offered: 0, locked: false 
     total_land_area: decimalOrNull(row.total_land_area),
     total_land_area_unit: row.total_land_area_unit ?? null,
     description: row.description,
+    income_type: row.income_type,
+    expected_hold_months: row.expected_hold_months,
     location_summary: row.location_summary,
     valuation: decimalOrNull(row.valuation),
     total_shares: shares,
@@ -291,6 +298,8 @@ export async function getProject(
 export interface ProjectInput {
   name?: string;
   description?: string | null;
+  income_type?: string;
+  expected_hold_months?: number | null;
   /** the valuation block; refused once a round has been on the market */
   valuation?: number | null;
   total_shares?: number | null;
@@ -357,6 +366,8 @@ function columnsFor(input: ProjectInput): Prisma.ProjectUncheckedUpdateInput {
   return {
     name: input.name?.trim(),
     description: input.description,
+    income_type: input.income_type as Prisma.ProjectUncheckedUpdateInput['income_type'],
+    expected_hold_months: input.expected_hold_months,
     valuation: input.valuation,
     total_shares: input.total_shares,
     valuation_date: fromDateOnly(input.valuation_date),

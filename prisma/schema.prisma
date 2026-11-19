@@ -401,6 +401,20 @@ enum LandSizeUnit {
   decimal
 }
 
+/// Where a project's money comes from, which is the first thing an investor
+/// asks after "what do I own": rent, a sale, a business run on it, or a mix.
+/// The profit-sharing module books income against it (REVENUE-SHARE-PLAN.md).
+enum ProjectIncomeType {
+  /// rent or lease from the land or the building
+  rent
+  /// the land or the units are sold on
+  resale
+  /// a business is run on it: a hotel, a market, a warehouse
+  operation
+  mixed
+  undecided
+}
+
 /// What happens to the land after its shares are sold.
 enum ConstructionAfterSale {
   undecided
@@ -420,6 +434,10 @@ model Project {
   sales_status                ProjectSalesStatus    @default(not_open)
   /// what the public listing says this project is
   description                 String?
+  /// where the money comes from, and roughly how long before it does
+  income_type                 ProjectIncomeType     @default(undecided)
+  /// how long an investor should expect to hold, in months; null = open-ended
+  expected_hold_months        Int?
   /// a fact typed on the project in Phase 1; a link to the Land module in Phase 2
   total_land_area             Decimal?              @db.Decimal(14, 2)
   total_land_area_unit        LandSizeUnit?

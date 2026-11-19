@@ -29,6 +29,8 @@ export const ProjectFields = z.object({
   total_land_area: z.number().positive('Enter the area as a number.').max(99_999_999).nullable(),
   total_land_area_unit: z.enum(['katha', 'bigha', 'decimal']).nullable(),
   description: z.string().trim().max(8000).nullable(),
+  income_type: z.enum(['rent', 'resale', 'operation', 'mixed', 'undecided']),
+  expected_hold_months: z.number().int().min(0).max(600).nullable(),
   location_summary: z.string().trim().max(300).nullable(),
   /*
    * The valuation block. It is on the project, not on a round, because one

@@ -30,6 +30,9 @@ export interface ApiProject {
   total_land_area: number | null;
   total_land_area_unit: LandSizeUnit | null;
   description: string | null;
+  /** where the money comes from, and how long before it does */
+  income_type: 'rent' | 'resale' | 'operation' | 'mixed' | 'undecided';
+  expected_hold_months: number | null;
   location_summary: string | null;
   /** what 100% of the project is worth, and into how many shares it is cut */
   valuation: number | null;
@@ -76,6 +79,8 @@ export type ProjectWrite = Partial<
     ApiProject,
     | 'name'
     | 'description'
+    | 'income_type'
+    | 'expected_hold_months'
     | 'valuation'
     | 'total_shares'
     | 'valuation_date'

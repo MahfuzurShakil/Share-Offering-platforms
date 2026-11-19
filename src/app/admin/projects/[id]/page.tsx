@@ -16,7 +16,6 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ViewOnlyArea, ViewOnlyNotice } from '@/components/ui/ViewOnly';
 import { useSession } from '@/lib/auth/session';
-import { LAND_SIZE_UNIT_LABEL } from '@/lib/domain/land';
 import { PROJECT_TYPE_LABEL } from '@/lib/domain/project';
 import { projectKeys, projectsApi } from '@/lib/api/projects';
 import { messageOf } from '@/lib/api/client';
@@ -25,6 +24,15 @@ import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate } from '@/lib/utils/format';
 
 type Tab = 'overview' | 'valuation' | 'revenue' | 'documents';
+
+/** Kept beside the form's own copy; both read the API's values. */
+const INCOME_TYPE_LABEL: Record<string, string> = {
+  rent: 'Rent or lease income',
+  resale: 'Selling the land or the units on',
+  operation: 'A business run on it',
+  mixed: 'More than one of these',
+  undecided: 'Not decided yet',
+};
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
   return (
@@ -149,12 +157,13 @@ export default function ProjectDetailPage() {
                   <Row label="Code" value={project.code} />
                   <Row label="Type" value={PROJECT_TYPE_LABEL[project.project_type]} />
                   <Row label="Location summary" value={project.location_summary} />
+                  <Row label="How it earns" value={INCOME_TYPE_LABEL[project.income_type]} />
                   <Row
-                    label="Total land area"
+                    label="Expected holding period"
                     value={
-                      project.total_land_area
-                        ? `${project.total_land_area} ${LAND_SIZE_UNIT_LABEL[project.total_land_area_unit ?? 'katha']}`
-                        : '—'
+                      project.expected_hold_months
+                        ? `${project.expected_hold_months} months`
+                        : 'Open-ended'
                     }
                   />
                   {/* Scope v3 §3.3 — who runs this project */}
