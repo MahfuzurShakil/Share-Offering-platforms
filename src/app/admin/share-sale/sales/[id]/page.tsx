@@ -1,381 +1,375 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams, useSearchParams } from 'next/navigation';
-import { Suspense, useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, ArrowUpRight, Award, FileSignature, HandCoins, IdCard, XCircle } from 'lucide-react';
+import { useParams } from 'next/navigation';
+import { useState, type ReactNode } from 'react';
+import {
+  ArrowLeft,
+  FileSignature,
+  HandCoins,
+  Undo2,
+  UserRound,
+  XCircle,
+} from 'lucide-react';
 import { DetailTabs, SaleBadge } from '@/components/admin/share-sale/bits';
-import { InvestorDetailsModal } from '@/components/admin/share-sale/InboxModals';
-import { ShareDocumentChecklist } from '@/components/admin/share-sale/ShareDocuments';
-import { SignAgreementWizard } from '@/components/admin/share-sale/SignAgreementWizard';
-import { InstallmentSchedule } from '@/components/admin/payments/InstallmentSchedule';
-import { Facts, SigningFacts } from '@/components/admin/signing/SigningParts';
-import { ReasonModal, RecordPaymentModal } from '@/components/admin/share-sale/ShareSaleModals';
-import { SaleCommissionCard } from '@/components/admin/sales-team/parts';
+import {
+  ReasonModal,
+  RecordPaymentModal,
+  ReverseReceiptModal,
+  SignAgreementModal,
+} from '@/components/admin/share-sale/SaleModals';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
-import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { useSession } from '@/lib/auth/session';
-import { missingToSign, shareDocChecklist } from '@/lib/domain/share-documents';
-import { FREQUENCY_LABEL, SHARE_PAYMENT_METHOD_LABEL, formatSharePct, lateFeeText } from '@/lib/domain/share-sale';
-import { customerUploadRepository, shareSaleOverview, shareSaleRepository } from '@/lib/repositories';
+import { shareSaleKeys, shareSalesApi, type ApiShareSale } from '@/lib/api/share-sales';
+import { useApi } from '@/lib/api/use-api';
+import { FREQUENCY_LABEL, SHARE_PAYMENT_METHOD_LABEL, formatSharePct } from '@/lib/domain/share-sale';
+import { cn } from '@/lib/utils/cn';
 import { formatBdt, formatDate, formatPhone } from '@/lib/utils/format';
 
-function Line({ label, children }: { label: string; children: ReactNode }) {
-  return (
-    <div className="flex items-baseline justify-between gap-3 py-2 text-sm">
-      <dt className="shrink-0 text-ink-muted">{label}</dt>
-      <dd className="min-w-0 text-right font-medium tabular-nums [overflow-wrap:anywhere]">{children}</dd>
-    </div>
-  );
-}
+type Tab = 'overview' | 'receipts';
+type Dialog = 'sign' | 'pay' | 'release' | 'cancel' | null;
 
-type Tab = 'overview' | 'sign' | 'agreement' | 'payments' | 'documents';
-type Dialog = 'pay' | 'release' | 'certificate' | 'investor' | 'signed' | null;
-const TABS: Tab[] = ['overview', 'sign', 'agreement', 'payments', 'documents'];
-
-/** One customer's share purchase: the terms, the schedule, every payment and what to do next. */
-function ShareSaleDetail() {
+/**
+ * One investor's purchase: the terms, the schedule, every receipt, and the
+ * one thing to do next.
+ *
+ * Everything money-shaped on this page was worked out by the server through
+ * `lib/domain/share-sale.ts` — what each row is owed, what is late and by how
+ * much, what has been paid. The screen formats it and does not add it up.
+ *
+ * The signing wizard's step-by-step KYC and the purchase's paper checklist
+ * come back when documents move to Postgres; signing is a single dialog
+ * meanwhile, and it collects the same facts.
+ */
+export default function ShareSaleDetailPage() {
   const { id } = useParams<{ id: string }>();
-  const params = useSearchParams();
   const { can } = useSession();
-  const mayEdit = can('share_sale', 'edit');
-  const data = useLiveQuery(() => shareSaleOverview(), []);
-  const customerId = data?.sales.find((r) => r.sale.id === id)?.sale.customer_id;
-  const uploads = useLiveQuery(() => (customerId ? customerUploadRepository.forCustomer(customerId) : Promise.resolve([])), [customerId]);
+  const maySell = can('share_sale', 'edit');
+  const maySign = can('share_sale', 'approve');
+  const mayTakeMoney = can('finance_collection', 'create');
+  const mayReverse = can('finance_collection', 'approve');
+
+  const [tab, setTab] = useState<Tab>('overview');
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [error, setError] = useState('');
-  const [tab, setTab] = useState<Tab>(() => (TABS.find((t) => t === params.get('tab')) ?? 'overview'));
+  const [reversing, setReversing] = useState<string | null>(null);
 
-  if (!data) return <p className="text-sm text-ink-muted">Loading…</p>;
-  const v = data.sales.find((r) => r.sale.id === id);
-  if (!v) return <EmptyState icon={XCircle} title="Purchase not found" action={<Link href="/admin/share-sale/investors">Back to investors</Link>} />;
-  const s = v.sale;
-  const o = v.offering;
-  const each = v.schedule.find((i) => i.seq === 1)?.amount;
-  const missing = uploads && v.customer ? missingToSign(shareDocChecklist(uploads, s.id, { has_nominee: !!v.customer.nominee_name, by_attorney: !!s.signing?.attorney_name })).length : 0;
-  const docsLabel = s.status === 'reserved' && missing ? `Documents (${missing} needed)` : 'Documents';
-  const signedCopy = (uploads ?? []).some((u) => u.kind === 'signed_copy' && u.sale_id === s.id && u.status !== 'rejected');
-  const act = async (fn: () => Promise<unknown>) => {
-    setError('');
-    try {
-      await fn();
-    } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save.');
-    }
-    setDialog(null);
-  };
+  const sale = useApi(shareSaleKeys.one(id), (signal) => shareSalesApi.get(id, signal));
 
-  // the back link goes where the page was opened from (feedback D1)
-  const from = params.get('from');
-  const back =
-    from === 'customer' && v.customer
-      ? { href: `/admin/customers/${v.customer.id}`, label: v.customer.name }
-      : from === 'offering' && o
-        ? { href: `/admin/share-sale/offerings/${o.id}`, label: `${o.code} · Round ${o.round_no}` }
-        : from === 'requests'
-          ? { href: '/admin/share-sale/requests', label: 'Customer Requests' }
-          : { href: '/admin/share-sale/investors', label: 'Investors & Dues' };
+  if (sale === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
+  if (!sale) {
+    return (
+      <EmptyState
+        icon={XCircle}
+        title="Purchase not found"
+        action={<Link href="/admin/share-sale/investors">Back to investors</Link>}
+      />
+    );
+  }
+
+  const live = sale.status === 'reserved' || sale.status === 'agreement_signed';
 
   return (
     <>
-      <Link href={back.href} className="mb-3 inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-admin-700">
-        <ArrowLeft className="size-4" /> {back.label}
+      <Link
+        href="/admin/share-sale/investors"
+        className="mb-3 inline-flex items-center gap-1.5 text-sm text-ink-muted hover:text-admin-700"
+      >
+        <ArrowLeft className="size-4" /> Investors &amp; Dues
       </Link>
+
       <div className="mb-6 flex flex-wrap items-start justify-between gap-3">
-        <div>
+        <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
-            <h1 className="text-xl font-semibold text-ink">
-              {v.customer?.name} · {s.shares} share{s.shares === 1 ? '' : 's'}
-            </h1>
-            <SaleBadge health={v.health} />
+            <h1 className="text-xl font-semibold text-ink">{sale.customer_name}</h1>
+            <SaleBadge health={sale.health} />
+            {sale.agreement_no && <Badge tone="teal">{sale.agreement_no}</Badge>}
           </div>
           <p className="mt-1 text-sm text-ink-muted">
-            {s.code} · {v.project?.name}
-            {o && (
-              <>
-                {' · '}
-                <Link href={`/admin/share-sale/offerings/${o.id}`} className="text-admin-700 hover:underline">
-                  {o.code} (Round {o.round_no})
-                </Link>
-              </>
-            )}
+            {sale.code} · {sale.project_name} · Round {sale.round_no} · {sale.shares} share
+            {sale.shares === 1 ? '' : 's'} ({formatSharePct(sale.share_pct)})
           </p>
         </div>
-        {mayEdit && (
-          <div className="flex flex-wrap gap-2">
-            {s.status === 'reserved' && (
-              <>
-                <Button variant="outline" onClick={() => setDialog('release')}>
-                  Release shares
-                </Button>
-                {tab !== 'sign' && (
-                  <Button onClick={() => setTab('sign')}>
-                    <FileSignature className="size-4" /> {s.sign_draft ? 'Continue signing' : 'Sign agreement'}
-                  </Button>
-                )}
-              </>
-            )}
-            {/*
-             * Cancel purchase and Undo last payment are hidden (feedback D5) until a
-             * cancellation & refund procedure and a Reverse payment by Accounts
-             * replace them — see OPEN-ITEMS 0u. The repository calls stay.
-             */}
-            {s.status === 'agreement_signed' && (
+
+        <div className="flex flex-wrap gap-2">
+          <Link href={`/admin/customers/${sale.customer_id}`}>
+            <Button variant="outline">
+              <UserRound className="size-4" /> The investor
+            </Button>
+          </Link>
+          {sale.status === 'reserved' && maySell && (
+            <Button variant="dangerGhost" onClick={() => setDialog('release')}>
+              Release
+            </Button>
+          )}
+          {sale.status === 'reserved' && maySign && (
+            <Button onClick={() => setDialog('sign')}>
+              <FileSignature className="size-4" /> Sign the agreement
+            </Button>
+          )}
+          {sale.status === 'agreement_signed' && maySign && (
+            <Button variant="dangerGhost" onClick={() => setDialog('cancel')}>
+              Cancel purchase
+            </Button>
+          )}
+          {(sale.status === 'agreement_signed' || sale.status === 'fully_paid') &&
+            mayTakeMoney &&
+            sale.outstanding + sale.late_fees > 0.5 && (
               <Button onClick={() => setDialog('pay')}>
-                <HandCoins className="size-4" /> Record payment
+                <HandCoins className="size-4" /> Record a payment
               </Button>
             )}
-            {s.status === 'fully_paid' && !s.certificate_no && (
-              <Button onClick={() => setDialog('certificate')}>
-                <Award className="size-4" /> Issue share certificate
-              </Button>
-            )}
-          </div>
-        )}
+        </div>
       </div>
 
-      {error && <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">{error}</p>}
-      {v.health === 'hold_expired' && (
-        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-          The hold ended on {formatDate(s.hold_until)}. Sign the agreement now, or release the shares back to the offering.
+      {sale.status === 'reserved' && (
+        <p className="mb-4 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+          {sale.shares} share{sale.shares === 1 ? '' : 's'} are held until{' '}
+          {formatDate(sale.hold_until)}. Nothing is owed until the agreement is signed — the
+          schedule is written then.
         </p>
       )}
-      {s.status_note && (s.status === 'released' || s.status === 'cancelled') && (
-        <p className="mb-4 rounded-xl border border-hairline bg-white px-4 py-3 text-sm text-ink-muted">
-          {s.status === 'released' ? 'Released' : 'Cancelled'}: {s.status_note}
+      {sale.status_note && (
+        <p className="mb-4 rounded-xl border border-hairline bg-slate-50/60 px-4 py-3 text-sm text-ink-muted">
+          {sale.status === 'released' ? 'Released' : 'Cancelled'}: {sale.status_note}
         </p>
       )}
 
-      <div className={tab === 'sign' ? 'grid gap-5' : 'grid gap-5 lg:grid-cols-[1fr_320px]'}>
+      <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0 lg:order-1">
           <DetailTabs
             tabs={[
-              { key: 'overview', label: 'Overview' },
-              ...(s.status === 'reserved' && mayEdit
-                ? [{ key: 'sign' as Tab, label: s.sign_draft ? `Sign agreement · step ${Math.min(s.sign_draft.step, 4) + 1} of 5` : 'Sign agreement' }]
-                : []),
-              ...(s.signing ? [{ key: 'agreement' as Tab, label: 'Agreement' }] : []),
-              { key: 'payments', label: v.schedule.length ? `Payments (${v.paid_count}/${v.schedule.length})` : 'Payments' },
-              { key: 'documents', label: docsLabel },
+              { key: 'overview' as const, label: 'Schedule' },
+              { key: 'receipts' as const, label: `Receipts (${sale.payments.length})` },
             ]}
             active={tab}
             onChange={setTab}
           />
 
-          {tab === 'sign' && s.status === 'reserved' && mayEdit && uploads && v.customer && (
-            <SignAgreementWizard
-              row={v}
-              uploads={uploads}
-              onExit={(signed) => {
-                setTab(signed ? 'agreement' : 'overview');
-                if (signed) setDialog('signed');
-              }}
-            />
-          )}
-
           {tab === 'overview' && (
-            <div className="space-y-5">
-              <Card>
+            <Card className="p-0">
+              <div className="px-5 pt-5">
                 <CardHeader
-                  title="Purchase"
+                  title="Payment schedule"
                   subtitle={
-                    s.agreement_no ? (
-                      <>
-                        <button type="button" onClick={() => setTab('agreement')} className="text-admin-700 hover:underline">
-                          Agreement {s.agreement_no}
-                        </button>{' '}
-                        · signed {formatDate(s.agreement_date)}
-                      </>
-                    ) : (
-                      `Reserved ${formatDate(s.reserved_on)}, held until ${formatDate(s.hold_until)}`
-                    )
+                    sale.schedule.length
+                      ? `Down payment on the signing day, then ${sale.installment_count} ${FREQUENCY_LABEL[sale.installment_frequency].toLowerCase()} installment${sale.installment_count === 1 ? '' : 's'}.`
+                      : 'Written when the agreement is signed.'
                   }
                 />
-                <dl className="divide-y divide-hairline">
-                  <Line label="Shares">
-                    {s.shares} · {formatSharePct(s.share_pct)} of the project
-                  </Line>
-                  <Line label="Price per share">{formatBdt(s.price_per_share)}</Line>
-                  <Line label="Total price">{formatBdt(s.total_price)}</Line>
-                  <Line label="Down payment">{formatBdt(s.down_payment)}</Line>
-                  <Line label="Installments">
-                    {s.installment_count ? `${s.installment_count} × ${FREQUENCY_LABEL[s.installment_frequency].toLowerCase()}${each ? ` of ${formatBdt(each)}` : ''}` : 'None — paid in full'}
-                  </Line>
-                  {s.certificate_no && <Line label="Share certificate">{`${s.certificate_no} · ${formatDate(s.certificate_date)}`}</Line>}
-                </dl>
-              </Card>
-              <Card>
-                <CardHeader title="Customer" subtitle={v.customer?.code} />
-                {v.customer && (
-                  <dl className="divide-y divide-hairline">
-                    <Line label="Name">{v.customer.name}</Line>
-                    <Line label="Customer type">{v.customer.customer_type === 'investor' ? <Badge tone="teal">Investor</Badge> : 'Buyer'}</Line>
-                    <Line label="Phone">{formatPhone(v.customer.phone)}</Line>
-                    <Line label="Email">{v.customer.email || '—'}</Line>
-                    <Line label="Father’s / spouse’s name">{v.customer.father_or_spouse_name || '—'}</Line>
-                    <Line label="NID">{v.customer.nid || '—'}</Line>
-                    <Line label="e-TIN">{v.customer.tin || '—'}</Line>
-                    <Line label="Address">{v.customer.address || '—'}</Line>
-                    <Line label="KYC">{v.customer.kyc_verified_on ? `Checked ${formatDate(v.customer.kyc_verified_on)}` : <span className="text-amber-700">Not checked yet</span>}</Line>
-                    <Line label="Nominee">{v.customer.nominee_name ? `${v.customer.nominee_name}${v.customer.nominee_relation ? ` (${v.customer.nominee_relation})` : ''}` : '—'}</Line>
-                    <Line label="Payout bank">{v.customer.bank_name ? `${v.customer.bank_name}${v.customer.bank_account ? ` · ${v.customer.bank_account}` : ''}` : '—'}</Line>
-                  </dl>
-                )}
-                {v.customer && (
-                  <div className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm font-medium">
-                    {mayEdit && (
-                      <button type="button" onClick={() => setDialog('investor')} className="inline-flex items-center gap-1 text-admin-700 hover:underline">
-                        <IdCard className="size-4" /> Investor details
-                      </button>
-                    )}
-                    <Link href={`/admin/customers/${v.customer.id}`} className="text-admin-700 hover:underline">
-                      Open customer
-                    </Link>
-                  </div>
-                )}
-              </Card>
-              <SaleCommissionCard kind="share" saleId={s.id} soldBy={s.sold_by_member_id} editable={mayEdit} />
-            </div>
-          )}
-
-          {/* the signing event only — plan and customer stay on Overview, papers on Documents (feedback D2) */}
-          {tab === 'agreement' && s.signing && (
-            <Card>
-              <CardHeader title={`Agreement ${s.agreement_no ?? ''}`} subtitle={`Signed ${formatDate(s.agreement_date)} at ${s.signing.place}`} />
-              <div className="space-y-5">
-                <Facts
-                  rows={[
-                    ['Agreement no.', s.agreement_no],
-                    ['Signed on', formatDate(s.agreement_date)],
-                    ['Signed at', s.signing.place],
-                    [
-                      'Signed copy',
-                      signedCopy ? (
-                        <button type="button" onClick={() => setTab('documents')} className="text-admin-700 hover:underline">
-                          On file · View in Documents
-                        </button>
-                      ) : (
-                        <button type="button" onClick={() => setTab('documents')} className="text-amber-700 hover:underline">
-                          Not on file · Upload in Documents
-                        </button>
-                      ),
-                    ],
-                  ]}
-                />
-                <SigningFacts signing={s.signing} partyName={v.customer?.name ?? 'the customer'} party="customer" />
               </div>
+              {sale.schedule.length === 0 ? (
+                <div className="px-5 pb-5">
+                  <EmptyState
+                    icon={FileSignature}
+                    title="No schedule yet"
+                    description="Sign the agreement and the schedule is written from the agreed plan."
+                  />
+                </div>
+              ) : (
+                <div className="overflow-x-auto">
+                  <table className="w-full min-w-[620px] text-sm">
+                    <thead>
+                      <tr className="border-y border-hairline bg-canvas/60 text-left text-xs text-ink-muted">
+                        <th className="px-5 py-2 font-medium">Due</th>
+                        <th className="px-3 py-2 font-medium">What</th>
+                        <th className="px-3 py-2 text-right font-medium">Amount</th>
+                        <th className="px-3 py-2 text-right font-medium">Paid</th>
+                        <th className="px-3 py-2 text-right font-medium">Late fee</th>
+                        <th className="px-5 py-2 font-medium">Status</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-hairline">
+                      {sale.schedule.map((row) => (
+                        <tr key={row.id} className={row.status === 'overdue' ? 'bg-red-50/40' : ''}>
+                          <td className="px-5 py-2.5 tabular-nums">{formatDate(row.due_date)}</td>
+                          <td className="px-3 py-2.5">{row.label}</td>
+                          <td className="px-3 py-2.5 text-right tabular-nums">
+                            {formatBdt(row.amount)}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-emerald-700">
+                            {row.paid_amount ? formatBdt(row.paid_amount) : '—'}
+                          </td>
+                          <td className="px-3 py-2.5 text-right tabular-nums text-amber-700">
+                            {row.late_fee_due || row.late_fee_paid
+                              ? formatBdt(row.late_fee_due + row.late_fee_paid)
+                              : '—'}
+                          </td>
+                          <td className="px-5 py-2.5">
+                            <StatusBadge row={row} />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                    <tfoot>
+                      <tr className="border-t border-hairline font-semibold">
+                        <td className="px-5 py-3" colSpan={2}>
+                          Total
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums">
+                          {formatBdt(sale.total_price)}
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums text-emerald-700">
+                          {formatBdt(sale.paid)}
+                        </td>
+                        <td className="px-3 py-3 text-right tabular-nums text-amber-700">
+                          {sale.late_fees ? formatBdt(sale.late_fees) : '—'}
+                        </td>
+                        <td />
+                      </tr>
+                    </tfoot>
+                  </table>
+                </div>
+              )}
             </Card>
           )}
 
-          {tab === 'payments' &&
-            (v.schedule.length ? (
-              <Card>
-                <InstallmentSchedule
-                  rows={v.schedule}
-                  subtitle={o ? `Late fee: ${lateFeeText(o)}. None on the down payment.` : undefined}
-                  receipts={v.payments.map((p) => ({
-                    id: p.id,
-                    code: p.code,
-                    date: p.paid_on,
-                    amount: p.amount,
-                    method: p.method_detail || SHARE_PAYMENT_METHOD_LABEL[p.method],
-                    reference: p.reference,
-                    channel: p.channel === 'online' ? 'Customer Portal' : null,
-                    allocations: p.allocations,
-                  }))}
+          {tab === 'receipts' && (
+            <Card className="p-0">
+              <div className="px-5 pt-5">
+                <CardHeader
+                  title="Receipts"
+                  subtitle="Every payment on this purchase. A wrong one is reversed, never edited — both entries stay."
                 />
-                {v.payments.length > 0 && (
-                  <Link href={`/admin/share-sale/transactions?customer=${s.customer_id}`} className="mt-3 inline-flex items-center gap-1 text-sm font-medium text-admin-700 hover:underline">
-                    All of this investor&apos;s transactions <ArrowUpRight className="size-4" />
-                  </Link>
-                )}
-              </Card>
-            ) : (
-              <Card>
-                <EmptyState icon={FileSignature} title="No schedule yet" description="The payment schedule is written when the agreement is signed." />
-              </Card>
-            ))}
-
-          {tab === 'documents' && uploads && v.customer && (
-            <Card>
-              <CardHeader
-                title="Papers on file"
-                subtitle={`Filed by the office or sent by the customer from the portal. ${s.status === 'reserved' ? 'Required ones are needed to sign.' : 'The customer sees these on their portal.'}`}
-              />
-              <ShareDocumentChecklist
-                uploads={uploads}
-                sale={s}
-                hasNominee={!!v.customer.nominee_name}
-                byAttorney={!!s.signing?.attorney_name}
-                mayEdit={mayEdit}
-                sales={data.sales.filter((r) => r.sale.customer_id === s.customer_id).map((r) => r.sale)}
-              />
+              </div>
+              {sale.payments.length === 0 ? (
+                <div className="px-5 pb-5">
+                  <EmptyState icon={HandCoins} title="Nothing received yet" />
+                </div>
+              ) : (
+                <ul className="divide-y divide-hairline">
+                  {sale.payments.map((p) => {
+                    const reversal = p.amount < 0;
+                    const reversed = sale.payments.some((x) => x.reverses_payment_id === p.id);
+                    return (
+                      <li key={p.id} className="flex flex-wrap items-center gap-3 px-5 py-3">
+                        <div className="min-w-0 flex-1">
+                          <p className="flex flex-wrap items-center gap-2 text-sm font-medium text-ink">
+                            {p.code}
+                            <span className="text-ink-muted">{formatDate(p.paid_on)}</span>
+                            <Badge>{SHARE_PAYMENT_METHOD_LABEL[p.method]}</Badge>
+                            {reversal && <Badge tone="amber">Reversal</Badge>}
+                            {reversed && <Badge tone="neutral">Reversed</Badge>}
+                          </p>
+                          <p className="text-xs text-ink-muted">
+                            {p.reference ? `Ref ${p.reference}` : 'No reference'}
+                            {p.late_fee !== 0 && ` · ${formatBdt(p.late_fee)} of it late fee`}
+                            {p.notes ? ` · ${p.notes}` : ''}
+                          </p>
+                        </div>
+                        <span
+                          className={cn(
+                            'shrink-0 text-sm font-semibold tabular-nums',
+                            reversal ? 'text-red-600' : 'text-emerald-700',
+                          )}
+                        >
+                          {formatBdt(p.amount)}
+                        </span>
+                        {mayReverse && !reversal && !reversed && !sale.certificate_no && (
+                          <Button variant="ghost" size="sm" onClick={() => setReversing(p.id)}>
+                            <Undo2 className="size-4" /> Reverse
+                          </Button>
+                        )}
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
             </Card>
           )}
         </div>
 
-        <aside className={tab === 'sign' ? 'hidden' : 'min-w-0 space-y-5 lg:order-2'}>
+        <aside className="min-w-0 space-y-5 lg:order-2">
           <Card>
-            <CardHeader title="Money" subtitle={v.schedule.length ? `${v.paid_count} of ${v.schedule.length} payments made` : 'The schedule is written when the agreement is signed'} />
-            <dl className="divide-y divide-hairline">
-              <Line label="Paid">
-                {formatBdt(v.paid)} · {v.progress_pct}%
-              </Line>
-              <Line label="Still to pay">{formatBdt(v.outstanding)}</Line>
-              <Line label="Overdue">{v.overdue_amount ? <span className="text-red-600">{formatBdt(v.overdue_amount)}</span> : '—'}</Line>
-              <Line label="Late fee owing">{v.late_fees ? <span className="text-red-600">{formatBdt(v.late_fees)}</span> : '—'}</Line>
-              <Line label="Next due">{v.next ? `${formatBdt(v.next.remaining)} · ${formatDate(v.next.due_date)}` : '—'}</Line>
-            </dl>
-            {v.schedule.length > 0 && (
+            <CardHeader title="Money" />
+            <Line label="Price">{formatBdt(sale.total_price)}</Line>
+            <Line label="Paid">
+              <span className="text-emerald-700">{formatBdt(sale.paid)}</span>
+            </Line>
+            <Line label="Outstanding">{formatBdt(sale.outstanding)}</Line>
+            <Line label="Owed now">
+              {sale.due_now > 0.5 ? (
+                <span className="text-red-600">{formatBdt(sale.due_now)}</span>
+              ) : (
+                'Nothing'
+              )}
+            </Line>
+            {live && sale.schedule.length > 0 && (
               <div className="mt-3 h-2 overflow-hidden rounded-full bg-slate-100">
-                <div className={`h-full ${v.health === 'overdue' ? 'bg-red-500' : 'bg-admin-500'}`} style={{ width: `${v.progress_pct}%` }} />
+                <div
+                  className="h-full rounded-full bg-emerald-500"
+                  style={{ width: `${sale.progress_pct}%` }}
+                />
               </div>
             )}
+          </Card>
+
+          <Card>
+            <CardHeader title="The purchase" />
+            <Line label="Shares">
+              {sale.shares} · {formatSharePct(sale.share_pct)}
+            </Line>
+            <Line label="Price a share">{formatBdt(sale.price_per_share)}</Line>
+            <Line label="Down payment">{formatBdt(sale.down_payment)}</Line>
+            <Line label="Installments">
+              {sale.installment_count} {FREQUENCY_LABEL[sale.installment_frequency].toLowerCase()}
+            </Line>
+            <Line label="Reserved">{formatDate(sale.reserved_on)}</Line>
+            {sale.agreement_date && <Line label="Signed">{formatDate(sale.agreement_date)}</Line>}
+            {sale.next_due_date && <Line label="Next due">{formatDate(sale.next_due_date)}</Line>}
+          </Card>
+
+          <Card>
+            <CardHeader title="Investor" />
+            <Line label="Name">{sale.customer_name}</Line>
+            <Line label="Code">{sale.customer_code}</Line>
+            <Line label="Phone">{formatPhone(sale.customer_phone)}</Line>
           </Card>
         </aside>
       </div>
 
-      {dialog === 'investor' && v.customer && <InvestorDetailsModal customer={v.customer} onClose={() => setDialog(null)} />}
-      {dialog === 'pay' && <RecordPaymentModal view={v} onClose={() => setDialog(null)} />}
-      {/* feedback B6: the down payment is its own payment — offered right after signing, never taken by it */}
-      <ConfirmDialog
-        open={dialog === 'signed'}
-        title="Agreement signed"
-        tone="default"
-        icon={FileSignature}
-        message={
-          s.down_payment > 0
-            ? `${s.agreement_no ?? s.code} is signed. The down payment of ${formatBdt(s.down_payment)} is due today. If it was handed over at the table, record it now; otherwise record it when it comes in — the customer can also pay it from the Customer Portal.`
-            : `${s.agreement_no ?? s.code} is signed and the payment schedule has started.`
-        }
-        confirmLabel={s.down_payment > 0 ? 'Record down payment now' : 'Done'}
-        cancelLabel={s.down_payment > 0 ? 'Later' : 'Close'}
-        onConfirm={() => setDialog(s.down_payment > 0 ? 'pay' : null)}
-        onCancel={() => setDialog(null)}
-      />
-      {dialog === 'release' && <ReasonModal sale={s} kind="release" onClose={() => setDialog(null)} />}
-      <ConfirmDialog
-        open={dialog === 'certificate'}
-        title="Issue the share certificate?"
-        message={`Every payment is in. A certificate number (CRT-…) is assigned and ${v.customer?.name ?? 'the customer'}'s ownership of ${formatSharePct(s.share_pct)} is confirmed.`}
-        tone="default"
-        icon={Award}
-        confirmLabel="Issue certificate"
-        onConfirm={() => act(() => shareSaleRepository.issueCertificate(s.id))}
-        onCancel={() => setDialog(null)}
-      />
+      {dialog === 'sign' && (
+        <SignAgreementModal sale={sale} onClose={() => setDialog(null)} />
+      )}
+      {dialog === 'pay' && <RecordPaymentModal sale={sale} onClose={() => setDialog(null)} />}
+      {(dialog === 'release' || dialog === 'cancel') && (
+        <ReasonModal
+          sale={sale}
+          action={dialog === 'release' ? 'release' : 'cancel'}
+          onClose={() => setDialog(null)}
+        />
+      )}
+      {reversing && (
+        <ReverseReceiptModal
+          sale={sale}
+          paymentId={reversing}
+          onClose={() => setReversing(null)}
+        />
+      )}
     </>
   );
 }
 
-export default function ShareSaleDetailPage() {
+function Line({ label, children }: { label: string; children: ReactNode }) {
   return (
-    <Suspense>
-      <ShareSaleDetail />
-    </Suspense>
+    <div className="flex items-baseline justify-between gap-3 border-b border-hairline py-2 text-sm last:border-0">
+      <span className="shrink-0 text-ink-muted">{label}</span>
+      <span className="min-w-0 text-right font-medium tabular-nums">{children}</span>
+    </div>
   );
+}
+
+function StatusBadge({ row }: { row: ApiShareSale['schedule'][number] }) {
+  if (row.status === 'paid') return <Badge tone="green">Paid</Badge>;
+  if (row.status === 'overdue') {
+    return (
+      <Badge tone="red">
+        {row.days_late} day{row.days_late === 1 ? '' : 's'} late
+      </Badge>
+    );
+  }
+  if (row.status === 'due') return <Badge tone="amber">Due</Badge>;
+  return <Badge>Upcoming</Badge>;
 }

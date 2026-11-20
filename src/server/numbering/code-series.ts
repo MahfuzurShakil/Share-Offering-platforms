@@ -40,6 +40,9 @@ export const CODE_SERIES = {
   share_offering: { module: 'share_offering', prefix: 'OFR', width: 3 },
   share_sale: { module: 'share_sale', prefix: 'SHR', width: 3 },
   share_payment: { module: 'share_payment', prefix: 'SRC', width: 4 },
+  /** the signed agreement behind a purchase, and the certificate that ends it */
+  agreement: { module: 'agreement', prefix: 'AGR', width: 3 },
+  certificate: { module: 'certificate', prefix: 'CRT', width: 3 },
   share_request: { module: 'share_request', prefix: 'SRQ', width: 3 },
   payment_submission: { module: 'payment_submission', prefix: 'PSB', width: 3 },
   revenue_entry: { module: 'revenue_entry', prefix: 'REV', width: 4 },

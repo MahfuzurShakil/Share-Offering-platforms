@@ -3,10 +3,11 @@
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowLeft, CalendarPlus, Lock, Pencil, PlayCircle, Trash2, XCircle } from 'lucide-react';
+import { ArrowLeft, CalendarPlus, Lock, Pencil, PlayCircle, Ticket, Trash2, XCircle } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
 import { AvailabilityBar, DetailTabs, OfferingBadge, Row } from '@/components/admin/share-sale/bits';
 import { ExtendOfferingModal, OpenOfferingModal } from '@/components/admin/share-sale/ShareSaleModals';
+import { ReserveModal } from '@/components/admin/share-sale/SaleModals';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
@@ -18,11 +19,11 @@ import { shareOfferingKeys, shareOfferingsApi } from '@/lib/api/share-offerings'
 import { useApi, useRefresh } from '@/lib/api/use-api';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
-type Dialog = 'open' | 'extend' | 'close' | 'cancel' | 'delete' | null;
+type Dialog = 'open' | 'reserve' | 'extend' | 'close' | 'cancel' | 'delete' | null;
 /*
- * The Purchases and Ownership tabs, and the Reserve shares button, are not
- * here yet: all three are built on the purchases and their payments, which
- * move to Postgres in the next batch and come back reading the same API.
+ * The Purchases and Ownership tabs are still to come: both are a view over
+ * this round's purchases, which the Investors & Dues screen already shows
+ * whole. Holding shares happens here, where the shares are.
  */
 type Tab = 'overview' | 'documents';
 
@@ -116,6 +117,11 @@ export default function OfferingDetailPage() {
                 <Button variant="outline" onClick={() => setDialog('extend')}>
                   <CalendarPlus className="size-4" /> Extend
                 </Button>
+                {state === 'open' && (
+                  <Button onClick={() => setDialog('reserve')} disabled={a.available === 0}>
+                    <Ticket className="size-4" /> Reserve shares
+                  </Button>
+                )}
               </>
             )}
           </div>
@@ -220,6 +226,15 @@ export default function OfferingDetailPage() {
 
       {dialog === 'open' && (
         <OpenOfferingModal
+          offering={o}
+          onClose={() => {
+            setDialog(null);
+            void refresh();
+          }}
+        />
+      )}
+      {dialog === 'reserve' && (
+        <ReserveModal
           offering={o}
           onClose={() => {
             setDialog(null);
