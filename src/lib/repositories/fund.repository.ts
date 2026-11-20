@@ -132,52 +132,16 @@ export const fundAllocationRepository = new FundAllocationRepository();
  * Who owns a project
  * ------------------------------------------------------------------ */
 
-export interface ShareSlice {
-  partner_id: string;
-  name: string;
-  /** share of this project */
-  share_pct: number;
-  /** an investor in this project only, or one of the company's partners */
-  kind: 'investor' | 'company';
-  /** a company partner's share of the company, which their slice is scaled from */
-  company_pct: number | null;
-}
-
-/**
- * The two cases the business actually has (client, 2026-10-21):
- *
- * 1. The company's partners own every project, in their company shares.
- * 2. Someone may invest in one project only. They take their share of that
- *    project first; the company's partners share what is left, still in
- *    their company proportions.
- *
- * So Lakeview with Shafiqul at 30% and the company at 50/30/20 is Shafiqul
- * 30%, Karim 35%, Rahim 21%, Selina 14%. A separately negotiated split for
- * one project (the old `project_partners` override) is not offered; the
- * table stays, unread, until that case is asked for again.
+/*
+ * `splitProject` and `ShareSlice` moved to `domain/partners.ts`, so the server
+ * shares the one rule rather than keeping a second copy of it: the split
+ * decides what each partner is credited in a profit declaration, and the
+ * browser previews the same figures. Re-exported here because the screens and
+ * the other repositories import them from this module.
  */
-export function splitProject(projectId: string, partners: Partner[]): ShareSlice[] {
-  const active = partners.filter((p) => p.is_active);
-  const investors = active.filter((p) => p.project_id === projectId);
-  const company = active.filter((p) => !p.project_id);
-  const left = Math.max(0, 100 - investors.reduce((s, p) => s + p.share_pct, 0));
-  const companyTotal = company.reduce((s, p) => s + p.share_pct, 0) || 100;
-  const round = (n: number) => Math.round(n * 100) / 100;
-  return [
-    ...investors
-      .sort((a, b) => b.share_pct - a.share_pct)
-      .map((p) => ({ partner_id: p.id, name: p.name, share_pct: p.share_pct, kind: 'investor' as const, company_pct: null })),
-    ...company
-      .sort((a, b) => b.share_pct - a.share_pct)
-      .map((p) => ({
-        partner_id: p.id,
-        name: p.name,
-        share_pct: round((p.share_pct * left) / companyTotal),
-        kind: 'company' as const,
-        company_pct: p.share_pct,
-      })),
-  ];
-}
+import { splitProject, type ShareSlice } from '../domain/partners';
+
+export { splitProject, type ShareSlice };
 
 export interface ProjectFundRow {
   project_id: string;

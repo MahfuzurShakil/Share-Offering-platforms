@@ -489,6 +489,7 @@ model Project {
   profit_withdrawals ProfitWithdrawal[]
   leads              Lead[]
   commission_plans   CommissionPlan[]
+  partners           Partner[]
 
   @@index([status])
   @@index([sales_status])
@@ -1207,6 +1208,8 @@ model ProfitAllocation {
   period   RevenuePeriod @relation(fields: [period_id], references: [id])
   project  Project       @relation(fields: [project_id], references: [id])
   customer Customer?     @relation(fields: [customer_id], references: [id])
+  /// the partner this line belongs to, where the holder is one
+  partner  Partner?      @relation(fields: [partner_id], references: [id])
 
   @@index([project_id, customer_id])
   @@index([period_id])
@@ -1270,6 +1273,8 @@ model ProfitWithdrawal {
 
   project  Project   @relation(fields: [project_id], references: [id])
   customer Customer? @relation(fields: [customer_id], references: [id])
+  /// the partner this line belongs to, where the holder is one
+  partner  Partner?  @relation(fields: [partner_id], references: [id])
 
   @@index([project_id, status])
   @@index([customer_id])
@@ -1571,4 +1576,120 @@ model CommissionPayout {
 
   @@index([member_id, paid_on])
   @@map("commission_payouts")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * Money (S4) — where the company's money sits, and who owns the rest of a
+ * project (REVENUE-SHARE-PLAN.md §4, PLATFORM-REPLAN Tier 3.5)
+ * This slice is the two things the modules already built are waiting for:
+ * * **Accounts** — a payout and a withdrawal say which account the money
+ * left. The columns are already on both, nullable, waiting for a row to
+ * point at.
+ * * **Partners** — the owners' side of a profit declaration is one line
+ * until these exist. With them it becomes one line per partner, and
+ * nothing else about the declaration changes.
+ * Fund receipts, allocations, loans and the cash position follow in the next
+ * slice; they all hang off these two.
+ * ------------------------------------------------------------------
+ */
+
+enum BankAccountType {
+  bank
+  mfs
+  cash
+}
+
+/// Where the company's money actually sits.
+///
+/// Nothing here moves money — the numbers are recorded as entered, and the
+/// cash position is worked out from the receipts and the payments that name an
+/// account. The opening balance carries the day it was true on, so a position
+/// asked for an earlier date does not count it.
+model BankAccount {
+  id   String          @id @default(uuid(7)) @db.Uuid
+  code String          @unique @db.VarChar(40)
+  name String          @db.VarChar(200)
+  type BankAccountType @default(bank)
+
+  bank_name      String? @db.VarChar(200)
+  account_number String? @db.VarChar(60)
+  branch         String? @db.VarChar(200)
+
+  opening_balance      Decimal  @default(0) @db.Decimal(18, 2)
+  /// the day `opening_balance` was true on
+  opening_balance_date DateTime @db.Date
+
+  is_active Boolean @default(true)
+  notes     String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  @@index([is_active])
+  @@map("bank_accounts")
+}
+
+/// Who owns the company, or one project of it.
+///
+/// Two cases and no more (client, 2026-10-21): a partner of the whole company,
+/// whose `share_pct` is their share of it; or somebody who invested in one
+/// project only, whose `share_pct` is their share of *that project* and who
+/// takes it before the company's partners divide what is left. The rule is
+/// `splitProject` in `src/lib/domain/partners.ts`, shared with the browser.
+model Partner {
+  id    String  @id @default(uuid(7)) @db.Uuid
+  code  String  @unique @db.VarChar(40)
+  name  String  @db.VarChar(200)
+  phone String? @db.VarChar(20)
+  nid   String? @db.VarChar(40)
+
+  /// of the company, or of `project_id` where that is set
+  share_pct  Decimal @db.Decimal(9, 6)
+  /// an investor in this project only; null = a partner of the whole company
+  project_id String? @db.Uuid
+
+  is_active Boolean @default(true)
+  notes     String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project     Project?              @relation(fields: [project_id], references: [id])
+  history     PartnerShareHistory[]
+  allocations ProfitAllocation[]
+  withdrawals ProfitWithdrawal[]
+
+  @@index([is_active])
+  @@index([project_id])
+  @@map("partners")
+}
+
+/// A change to a partner's percentage, from the day it took effect.
+///
+/// Append-only and never deleted, for the same reason `org_moves` is: a
+/// declaration is split on its record date, and a percentage changed in
+/// October must not re-split a period declared in June. `shareOn` in
+/// `domain/partners.ts` reads the last change on or before a date.
+model PartnerShareHistory {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  partner_id     String   @db.Uuid
+  /// what the percentage became
+  share_pct      Decimal  @db.Decimal(9, 6)
+  /// the day it took effect
+  effective_from DateTime @db.Date
+  note           String?
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  partner Partner @relation(fields: [partner_id], references: [id], onDelete: Cascade)
+
+  @@index([partner_id, effective_from])
+  @@map("partner_share_history")
 }

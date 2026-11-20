@@ -13,6 +13,7 @@ import { assertWithinScope, type StaffPrincipal } from '../auth/rbac';
 import { prisma, withTx, type Tx } from '../db/prisma';
 import { conflict, invalid, notFound } from '../http/respond';
 import { nextCode } from '../numbering/code-series';
+import { ownersOfProject } from './money.service';
 import { today } from './share-offering.service';
 
 /**
@@ -920,13 +921,25 @@ async function capTableAt(
   }));
 
   /*
-   * The owners keep whatever customers do not hold. One line for now: who the
-   * owners are, and in what proportion, is the Money module's (partners and
-   * project investors), which is still on the interim layer. The amount is
-   * already right; only its breakdown is waiting.
+   * The owners keep whatever the customers do not hold — unsold shares and the
+   * never-offered part both belong to them (REVENUE-SHARE-PLAN.md §4).
+   *
+   * One line per partner, read on the record date: a project investor takes
+   * their share of this project first and the company's partners divide what
+   * is left, in the percentages they held *then*. A percentage changed since
+   * must not re-split a period already declared, which is what
+   * `partner_share_history` is for.
+   *
+   * With no partner on file it stays a single unattributed line, as it did
+   * before the Money module existed: the amount was always right, and only
+   * its breakdown was waiting.
    */
   const held = customers.reduce((t, c) => t + c.ownership_pct, 0);
-  const owners: OwnerSlice[] = [{ key: 'owners', share_pct: Math.max(0, 100 - held) }];
+  const slices = await ownersOfProject(client, projectId, held, recordDate);
+  const owners: OwnerSlice[] =
+    slices.length > 0
+      ? slices.map((slice) => ({ key: slice.partner_id, share_pct: slice.share_pct }))
+      : [{ key: 'owners', share_pct: Math.max(0, 100 - held) }];
 
   return { customers, owners };
 }
@@ -943,6 +956,13 @@ export interface ProfitAllocationDto {
   holder_type: string;
   customer_id: string | null;
   customer_name: string | null;
+  /**
+   * Which partner an owners' line belongs to. Null on a customer's line, and
+   * null on the single unattributed owners' line a project with no partners on
+   * file still gets.
+   */
+  partner_id: string | null;
+  partner_name: string | null;
   share_sale_id: string | null;
   ownership_pct: number;
   eligibility_factor: number;
@@ -1036,6 +1056,12 @@ export async function declarePeriod(
           project_id: period.project_id,
           holder_type: holding ? ('customer' as const) : ('partner' as const),
           customer_id: holding?.customer_id ?? null,
+          /*
+           * An owners' line names the partner it belongs to, unless there are
+           * no partners on file — then its key is the literal 'owners' and the
+           * line stays unattributed.
+           */
+          partner_id: holding || line.key === 'owners' ? null : line.key,
           share_sale_id: holding?.sale_id ?? null,
           ownership_pct: new Prisma.Decimal(line.ownership_pct.toFixed(6)),
           eligibility_factor: new Prisma.Decimal(line.factor.toFixed(6)),
@@ -1104,11 +1130,19 @@ export async function listAllocations(
   const rows = await prisma.profitAllocation.findMany({
     where: { period_id: periodId },
     orderBy: [{ holder_type: 'asc' }, { gross: 'desc' }],
-    include: { customer: { select: { name: true } } },
+    include: {
+      customer: { select: { name: true } },
+      partner: { select: { name: true } },
+    },
   });
 
   return (
-    rows as (Prisma.ProfitAllocationGetPayload<{ include: { customer: { select: { name: true } } } }>)[]
+    rows as (Prisma.ProfitAllocationGetPayload<{
+      include: {
+        customer: { select: { name: true } };
+        partner: { select: { name: true } };
+      };
+    }>)[]
   ).map((row) => ({
     id: row.id,
     period_id: row.period_id,
@@ -1116,6 +1150,8 @@ export async function listAllocations(
     holder_type: row.holder_type,
     customer_id: row.customer_id,
     customer_name: row.customer?.name ?? null,
+    partner_id: row.partner_id,
+    partner_name: row.partner?.name ?? null,
     share_sale_id: row.share_sale_id,
     ownership_pct: num(row.ownership_pct),
     eligibility_factor: num(row.eligibility_factor),

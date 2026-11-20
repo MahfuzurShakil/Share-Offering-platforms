@@ -66,8 +66,9 @@ export const CODE_SERIES = {
   commission_plan: { module: 'commission_plan', prefix: 'CMP', width: 3, yearless: true },
   commission_payout: { module: 'commission_payout', prefix: 'CPO', width: 3 },
   journal_entry: { module: 'journal_entry', prefix: 'JV', width: 4 },
-  bank_account: { module: 'bank_account', prefix: 'ACC', width: 2 },
-  partner: { module: 'partner', prefix: 'PTR', width: 2 },
+  /* an account is opened once and a partner joins once: no year, as `ORG` */
+  bank_account: { module: 'bank_account', prefix: 'ACC', width: 3, yearless: true },
+  partner: { module: 'partner', prefix: 'PTR', width: 3, yearless: true },
 } as const;
 
 export type CodeSeriesKey = keyof typeof CODE_SERIES;

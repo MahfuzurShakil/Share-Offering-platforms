@@ -25,6 +25,8 @@ export const SOFT_DELETE_MODELS = new Set([
   'RevenuePeriod',
   'ProfitWithdrawal',
   'OrgMember',
+  'BankAccount',
+  'Partner',
   'CommissionPlan',
   /*
    * Not here, and never: ShareInstallment, SharePayment and
