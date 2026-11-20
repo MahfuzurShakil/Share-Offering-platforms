@@ -484,6 +484,7 @@ model Project {
   revenue_entries    RevenueEntry[]
   revenue_periods    RevenuePeriod[]
   profit_allocations ProfitAllocation[]
+  profit_withdrawals ProfitWithdrawal[]
 
   @@index([status])
   @@index([sales_status])
@@ -560,6 +561,7 @@ model Customer {
 
   sales       ShareSale[]
   allocations ProfitAllocation[]
+  withdrawals ProfitWithdrawal[]
 
   @@index([name])
   @@index([created_at])
@@ -1073,4 +1075,67 @@ model ProfitAllocation {
   @@index([project_id, customer_id])
   @@index([period_id])
   @@map("profit_allocations")
+}
+
+enum WithdrawalStatus {
+  requested
+  approved
+  paid
+  rejected
+}
+
+enum WithdrawalMethod {
+  bank_transfer
+  bkash
+  nagad
+  cheque
+  cash
+}
+
+/// A holder asking for their profit balance, and what became of it
+/// (REVENUE-SHARE-PLAN.md section 5.3).
+///
+/// The balance itself is not stored anywhere: it is what was credited less
+/// what has been paid out and what is being asked for. Storing it would mean
+/// two sources of truth for the same money, and they would disagree the first
+/// time a declaration and a payout crossed.
+model ProfitWithdrawal {
+  id          String           @id @default(uuid(7)) @db.Uuid
+  code        String           @unique @db.VarChar(40)
+  project_id  String           @db.Uuid
+  holder_type ProfitHolderType
+  customer_id String?          @db.Uuid
+  partner_id  String?          @db.Uuid
+
+  amount Decimal          @db.Decimal(18, 2)
+  method WithdrawalMethod @default(bank_transfer)
+  /// the bank account or wallet number as it was when they asked
+  pay_to String           @db.VarChar(200)
+
+  status       WithdrawalStatus @default(requested)
+  requested_on DateTime         @db.Date
+  /// asked for on the Customer Portal, or recorded by the office
+  channel      String           @default("office") @db.VarChar(20)
+
+  decided_by    String?   @db.Uuid
+  decided_on    DateTime? @db.Date
+  reject_reason String?
+
+  /// how it was actually paid
+  paid_on      DateTime? @db.Date
+  account_id   String?   @db.Uuid
+  reference_no String?   @db.VarChar(120)
+  notes        String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project  Project   @relation(fields: [project_id], references: [id])
+  customer Customer? @relation(fields: [customer_id], references: [id])
+
+  @@index([project_id, status])
+  @@index([customer_id])
+  @@map("profit_withdrawals")
 }

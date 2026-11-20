@@ -647,6 +647,51 @@ export async function listPeriods(
   return { policy, closed, open };
 }
 
+export interface PeriodRowDto extends RevenuePeriodDto {
+  project_name: string;
+  /** how many holders were credited, once it is declared */
+  holders: number;
+}
+
+/**
+ * Every closed period across every project, for the Profit Distributions
+ * screen — which is the one place somebody looks to answer "what have we
+ * declared, and on which projects".
+ */
+export async function listAllPeriods(
+  principal: StaffPrincipal,
+  filters: { project_id?: string; status?: string } = {},
+): Promise<PeriodRowDto[]> {
+  const where: Prisma.RevenuePeriodWhereInput = { deleted_at: null };
+  if (principal.project_ids.length > 0) where.project_id = { in: principal.project_ids };
+  if (filters.project_id) {
+    assertWithinScope(principal, filters.project_id);
+    where.project_id = filters.project_id;
+  }
+  if (filters.status) {
+    where.status = filters.status as Prisma.RevenuePeriodWhereInput['status'];
+  }
+
+  const rows = await prisma.revenuePeriod.findMany({
+    where,
+    orderBy: [{ period_start: 'desc' }],
+    include: {
+      project: { select: { name: true } },
+      _count: { select: { allocations: true } },
+    },
+  });
+
+  type Row = Prisma.RevenuePeriodGetPayload<{
+    include: { project: { select: { name: true } }; _count: { select: { allocations: true } } };
+  }>;
+
+  return (rows as Row[]).map((row) => ({
+    ...toPeriodDto(row as unknown as PeriodRow),
+    project_name: row.project.name,
+    holders: row._count.allocations,
+  }));
+}
+
 /**
  * Closes a period: no more entries in it, and the statement is frozen.
  *
@@ -970,10 +1015,23 @@ export async function declarePeriod(
     const lines = splitDeclared(declared, customers, owners, num(policy.tax_withholding_pct));
     const byKey = new Map(customers.map((c) => [c.key, c]));
 
-    await tx.profitAllocation.createMany({
-      data: lines.map((line) => {
-        const holding = byKey.get(line.key);
-        return {
+    for (const line of lines) {
+      const holding = byKey.get(line.key);
+
+      /*
+       * Plan §5.2: with "adjust against overdue dues first" on, a holder who
+       * is behind on their own installments has their profit pay those first,
+       * and only what is left reaches their balance. It is booked as a real
+       * payment on the purchase, method `profit_adjustment` — no money moves,
+       * but the installment is genuinely paid and the receipt says where from.
+       */
+      let adjusted = 0;
+      if (holding && policy.adjust_overdue_first && line.net > 0) {
+        adjusted = await payOverdueFromProfit(tx, holding.sale_id, line.net, date);
+      }
+
+      await tx.profitAllocation.create({
+        data: {
           period_id: periodId,
           project_id: period.project_id,
           holder_type: holding ? ('customer' as const) : ('partner' as const),
@@ -983,12 +1041,12 @@ export async function declarePeriod(
           eligibility_factor: new Prisma.Decimal(line.factor.toFixed(6)),
           gross: new Prisma.Decimal(line.gross),
           tax_withheld: new Prisma.Decimal(line.tax),
-          adjusted_to_dues: new Prisma.Decimal(0),
-          net_credited: new Prisma.Decimal(line.net),
+          adjusted_to_dues: new Prisma.Decimal(adjusted),
+          net_credited: new Prisma.Decimal(line.net - adjusted),
           created_by: currentActorId(),
-        };
-      }),
-    });
+        },
+      });
+    }
 
     return tx.revenuePeriod.update({
       where: { id: periodId },
@@ -1006,6 +1064,30 @@ export async function declarePeriod(
     period: toPeriodDto(periodRow),
     allocations: await listAllocations(principal, periodId),
   };
+}
+
+/**
+ * Spends a holder's profit on their own overdue installments, and says how
+ * much went that way.
+ *
+ * It goes through the share ledger like any other payment, which is the point:
+ * the schedule, the receipts and the late fees all behave as they always do,
+ * and the receipt names `profit_adjustment` so anybody reading the file can
+ * see that no cash came in.
+ */
+async function payOverdueFromProfit(
+  client: Tx,
+  saleId: string,
+  credit: number,
+  paidOn: string,
+): Promise<number> {
+  const { dueNowOn, recordProfitAdjustment } = await import('./share-sale.service');
+  const owed = await dueNowOn(client, saleId, paidOn);
+  if (owed <= 0) return 0;
+  const take = Math.min(Math.round(credit), Math.round(owed));
+  if (take <= 0) return 0;
+  await recordProfitAdjustment(client, saleId, take, paidOn);
+  return take;
 }
 
 export async function listAllocations(

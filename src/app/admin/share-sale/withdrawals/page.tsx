@@ -1,104 +1,164 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { BadgeCheck, Banknote, Clock, HandCoins, Wallet } from 'lucide-react';
-import { WithdrawalBadge } from '@/components/admin/revenue/bits';
-import { PayWithdrawalModal, RejectWithdrawalModal } from '@/components/admin/revenue/RevenueModals';
+import { BadgeCheck, Banknote, Clock, HandCoins, XCircle } from 'lucide-react';
 import { Kpi } from '@/components/admin/share-sale/bits';
+import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
 import { DataTable, type Column } from '@/components/ui/DataTable';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { FilterBar, FilterSelect } from '@/components/ui/FilterBar';
+import { Field, TextArea, TextInput } from '@/components/ui/Field';
+import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useSession } from '@/lib/auth/session';
-import { WITHDRAWAL_STATUSES, type WithdrawalStatus } from '@/lib/db/types';
+import { messageOf } from '@/lib/api/client';
+import {
+  withdrawalKeys,
+  withdrawalsApi,
+  type ApiWithdrawal,
+} from '@/lib/api/revenue';
+import { useApi, useRefresh } from '@/lib/api/use-api';
 import { WITHDRAWAL_METHOD_LABEL, WITHDRAWAL_STATUS_META } from '@/lib/domain/revenue-share';
-import { profitWithdrawalRepository, type WithdrawalRow } from '@/lib/repositories';
-import { formatBdt, formatDate } from '@/lib/utils/format';
+import { cn } from '@/lib/utils/cn';
+import { formatBdt, formatDate, formatPhone, todayLocal } from '@/lib/utils/format';
+
+type Show = 'requested' | 'approved' | 'paid' | 'rejected' | 'all';
+
+const SHOWS: [Show, string][] = [
+  ['requested', 'Waiting'],
+  ['approved', 'To pay'],
+  ['paid', 'Paid'],
+  ['rejected', 'Refused'],
+  ['all', 'All'],
+];
 
 /**
- * Profit payouts (REVENUE-SHARE-PLAN.md §5.3): customers ask from the
- * Customer Portal, the office asks for partners; Accounts approves, rejects
- * with a reason, or records the payment — which reaches Cash Position.
+ * Share Sale → Profit Withdrawals (REVENUE-SHARE-PLAN.md §5.3).
+ *
+ * Money the holders have asked for out of their profit balance, and what
+ * became of it. A request holds its amount from the moment it is made until
+ * it is paid or refused, so the balance on the investor's page and the queue
+ * here can never disagree.
  */
-export default function WithdrawalsPage() {
-  const { can, userId } = useSession();
-  const mayEdit = can('share_sale', 'edit');
-  const rows = useLiveQuery(() => profitWithdrawalRepository.rows(), []);
-  const [status, setStatus] = useState<WithdrawalStatus | 'open' | ''>('open');
-  const [pay, setPay] = useState<WithdrawalRow | null>(null);
-  const [reject, setReject] = useState<WithdrawalRow | null>(null);
-  if (!rows) return <p className="text-sm text-ink-muted">Loading…</p>;
+export default function ProfitWithdrawalsPage() {
+  const refresh = useRefresh([withdrawalKeys.all]);
+  const [show, setShow] = useState<Show>('requested');
+  const [paying, setPaying] = useState<ApiWithdrawal | null>(null);
+  const [rejecting, setRejecting] = useState<ApiWithdrawal | null>(null);
+  const [error, setError] = useState('');
 
-  const open = (r: WithdrawalRow) => r.withdrawal.status === 'requested' || r.withdrawal.status === 'approved';
-  const shown = rows.filter((r) => (status === 'open' ? open(r) : !status || r.withdrawal.status === status));
-  const total = (f: (r: WithdrawalRow) => boolean) => rows.filter(f).reduce((s, r) => s + r.withdrawal.amount, 0);
+  const query = { page_size: 200 } as const;
+  const page = useApi(withdrawalKeys.list(query), (signal) =>
+    withdrawalsApi.list(query, signal),
+  );
 
-  const columns: Column<WithdrawalRow & { id: string }>[] = [
+  if (page === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
+
+  const all = page.rows;
+  const rows = show === 'all' ? all : all.filter((r) => r.status === show);
+
+  const totals = {
+    waiting: all.filter((r) => r.status === 'requested').reduce((t, r) => t + r.amount, 0),
+    toPay: all.filter((r) => r.status === 'approved').reduce((t, r) => t + r.amount, 0),
+    paid: all.filter((r) => r.status === 'paid').reduce((t, r) => t + r.amount, 0),
+  };
+
+  const act = async (fn: () => Promise<unknown>) => {
+    setError('');
+    try {
+      await fn();
+      await refresh();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  };
+
+  const columns: Column<ApiWithdrawal>[] = [
     {
-      key: 'who',
-      header: 'Who',
+      key: 'code',
+      header: 'Request',
       cell: (r) => (
-        <div>
-          <p className="font-medium text-ink">{r.holder_name}</p>
-          <p className="text-xs text-ink-muted">
-            {r.withdrawal.code} · {r.withdrawal.holder_type === 'customer' ? 'Customer' : 'Owner'} ·{' '}
-            {r.withdrawal.channel === 'portal' ? 'from the portal' : 'by the office'}
-          </p>
-        </div>
+        <span className="block">
+          <span className="block font-medium text-ink">{r.code}</span>
+          <span className="block text-xs text-ink-muted">{formatDate(r.requested_on)}</span>
+        </span>
       ),
+      sortValue: (r) => r.code,
     },
-    { key: 'project', header: 'Project', cell: (r) => r.project_name },
-    { key: 'asked', header: 'Asked on', sortValue: (r) => r.withdrawal.requested_on, cell: (r) => formatDate(r.withdrawal.requested_on) },
-    { key: 'amount', header: 'Amount', align: 'right', sortValue: (r) => r.withdrawal.amount, cell: (r) => <span className="font-medium">{formatBdt(r.withdrawal.amount)}</span> },
     {
-      key: 'to',
+      key: 'holder',
+      header: 'Holder',
+      cell: (r) => (
+        <span className="block">
+          <span className="block">{r.customer_name ?? 'Partner'}</span>
+          <span className="block text-xs text-ink-muted">
+            {r.customer_phone ? formatPhone(r.customer_phone) : r.customer_code} · {r.project_name}
+          </span>
+        </span>
+      ),
+      sortValue: (r) => r.customer_name ?? '',
+    },
+    {
+      key: 'pay_to',
       header: 'Pay to',
       cell: (r) => (
-        <div className="text-sm">
-          <p>{WITHDRAWAL_METHOD_LABEL[r.withdrawal.method]}</p>
-          <p className="text-xs text-ink-muted">{r.withdrawal.pay_to}</p>
-        </div>
+        <span className="block">
+          <span className="block">{WITHDRAWAL_METHOD_LABEL[r.method]}</span>
+          <span className="block text-xs text-ink-muted">{r.pay_to}</span>
+        </span>
       ),
+      sortValue: (r) => r.method,
+    },
+    {
+      key: 'amount',
+      header: 'Amount',
+      align: 'right',
+      cell: (r) => <span className="font-medium tabular-nums">{formatBdt(r.amount)}</span>,
+      sortValue: (r) => r.amount,
     },
     {
       key: 'status',
       header: 'Status',
       cell: (r) => (
-        <div>
-          <WithdrawalBadge status={r.withdrawal.status} />
-          {r.withdrawal.status === 'paid' && (
-            <p className="mt-0.5 text-xs text-ink-muted">
-              {formatDate(r.withdrawal.paid_on)} · {r.account_name}
-            </p>
+        <span className="block">
+          <Badge tone={WITHDRAWAL_STATUS_META[r.status].tone}>
+            {WITHDRAWAL_STATUS_META[r.status].label}
+          </Badge>
+          {r.status === 'rejected' && r.reject_reason && (
+            <span className="mt-1 block max-w-48 text-xs text-ink-muted">{r.reject_reason}</span>
           )}
-          {r.withdrawal.status === 'rejected' && <p className="mt-0.5 max-w-48 text-xs text-ink-muted">{r.withdrawal.reject_reason}</p>}
-        </div>
+          {r.status === 'paid' && r.paid_on && (
+            <span className="mt-1 block text-xs text-ink-muted">
+              {formatDate(r.paid_on)}
+              {r.reference_no ? ` · ${r.reference_no}` : ''}
+            </span>
+          )}
+        </span>
       ),
+      sortValue: (r) => r.status,
     },
     {
-      key: 'act',
+      key: 'do',
       header: '',
-      align: 'right',
-      cell: (r) =>
-        mayEdit &&
-        open(r) && (
-          <div className="flex justify-end gap-2">
-            {r.withdrawal.status === 'requested' && (
-              <Button size="sm" variant="outline" onClick={() => profitWithdrawalRepository.approve(r.withdrawal.id, userId)}>
+      cell: (r) => (
+        <span className="flex justify-end gap-2">
+          {r.status === 'requested' && (
+            <>
+              <Button variant="ghost" size="sm" onClick={() => setRejecting(r)}>
+                Refuse
+              </Button>
+              <Button size="sm" onClick={() => act(() => withdrawalsApi.approve(r.id))}>
                 Approve
               </Button>
-            )}
-            <Button size="sm" onClick={() => setPay(r)}>
-              Pay
+            </>
+          )}
+          {r.status === 'approved' && (
+            <Button size="sm" onClick={() => setPaying(r)}>
+              <Banknote className="size-4" /> Record payout
             </Button>
-            <Button size="sm" variant="dangerGhost" onClick={() => setReject(r)}>
-              Reject
-            </Button>
-          </div>
-        ),
+          )}
+        </span>
+      ),
     },
   ];
 
@@ -106,63 +166,242 @@ export default function WithdrawalsPage() {
     <>
       <PageHeader
         title="Profit Withdrawals"
-        subtitle="Customers ask for their profit balance from the Customer Portal; partners are paid from the project's Income & Profit tab."
+        subtitle="What holders have asked for out of their profit, and what became of it. The amount is held from their balance until it is paid or refused."
       />
-      <div className="mb-5 grid grid-cols-2 gap-3 lg:grid-cols-4">
-        <Kpi label="New requests" value={rows.filter((r) => r.withdrawal.status === 'requested').length} icon={Clock} />
-        <Kpi label="Approved, to pay" value={formatBdt(total((r) => r.withdrawal.status === 'approved'))} icon={BadgeCheck} />
-        <Kpi label="Waiting in total" value={formatBdt(total(open))} icon={Wallet} />
-        <Kpi label="Paid out" value={formatBdt(total((r) => r.withdrawal.status === 'paid'))} icon={Banknote} />
-      </div>
-      <Card className="p-0">
-        <div className="border-b border-hairline p-4">
-          <FilterBar>
-            <FilterSelect label="Status" value={status} onChange={(e) => setStatus(e.target.value as WithdrawalStatus | 'open' | '')}>
-              <option value="open">Waiting (new + approved)</option>
-              <option value="">All</option>
-              {WITHDRAWAL_STATUSES.map((s) => (
-                <option key={s} value={s}>
-                  {WITHDRAWAL_STATUS_META[s].label}
-                </option>
-              ))}
-            </FilterSelect>
-          </FilterBar>
-        </div>
-        <DataTable
-          rows={shown.map((r) => ({ ...r, id: r.withdrawal.id }))}
-          columns={columns}
-          initialSort={{ key: 'asked', direction: 'desc' }}
-          label="requests"
-          emptyState={
-            <div className="p-6">
-              <EmptyState icon={HandCoins} title="Nothing waiting" description="Payout requests from customers and partners appear here." />
-            </div>
-          }
-          mobileCard={(r) => (
-            <div className="space-y-2 p-4">
-              <div className="flex items-center justify-between">
-                <p className="font-medium text-ink">{r.holder_name}</p>
-                <WithdrawalBadge status={r.withdrawal.status} />
-              </div>
-              <p className="text-sm text-ink-muted">
-                {formatBdt(r.withdrawal.amount)} · {r.project_name} · {WITHDRAWAL_METHOD_LABEL[r.withdrawal.method]}
-              </p>
-              {mayEdit && open(r) && (
-                <div className="flex gap-2">
-                  <Button size="sm" onClick={() => setPay(r)}>
-                    Pay
-                  </Button>
-                  <Button size="sm" variant="dangerGhost" onClick={() => setReject(r)}>
-                    Reject
-                  </Button>
-                </div>
-              )}
-            </div>
-          )}
+
+      {error && (
+        <p className="mb-4 rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700">
+          {error}
+        </p>
+      )}
+
+      <div className="mb-5 grid gap-3 sm:grid-cols-3">
+        <Kpi
+          label="Waiting on a decision"
+          value={formatBdt(totals.waiting)}
+          hint={`${all.filter((r) => r.status === 'requested').length} request(s)`}
+          icon={Clock}
+          tone={totals.waiting ? 'danger' : 'default'}
         />
+        <Kpi
+          label="Approved, to pay"
+          value={formatBdt(totals.toPay)}
+          hint="money owed to holders"
+          icon={BadgeCheck}
+        />
+        <Kpi label="Paid out" value={formatBdt(totals.paid)} icon={HandCoins} />
+      </div>
+
+      <Card className="p-0">
+        <div className="flex flex-wrap gap-1 border-b border-hairline px-5 pt-3">
+          {SHOWS.map(([key, label]) => {
+            const n = key === 'all' ? all.length : all.filter((r) => r.status === key).length;
+            return (
+              <button
+                key={key}
+                type="button"
+                onClick={() => setShow(key)}
+                className={cn(
+                  '-mb-px flex items-center gap-2 border-b-2 px-3 py-2.5 text-sm font-medium transition-colors',
+                  show === key
+                    ? 'border-admin-500 text-admin-700'
+                    : 'border-transparent text-ink-muted hover:text-ink',
+                )}
+              >
+                {label}
+                <span
+                  className={cn(
+                    'rounded-full px-1.5 text-[11px]',
+                    key === 'requested' && n
+                      ? 'bg-amber-50 text-amber-700'
+                      : show === key
+                        ? 'bg-admin-50 text-admin-700'
+                        : 'bg-slate-100 text-ink-muted',
+                  )}
+                >
+                  {n}
+                </span>
+              </button>
+            );
+          })}
+        </div>
+        <div className="p-5">
+          <DataTable
+            rows={rows}
+            columns={columns}
+            label="requests"
+            emptyState={
+              <EmptyState
+                icon={HandCoins}
+                title={show === 'requested' ? 'Nothing waiting' : 'Nothing here'}
+                description={
+                  all.length
+                    ? 'Try another tab.'
+                    : 'A holder can ask for their profit once a period has been declared.'
+                }
+              />
+            }
+            mobileCard={(r) => (
+              <div className="space-y-1">
+                <div className="flex items-start justify-between gap-2">
+                  <span>
+                    <span className="block font-medium text-ink">{r.customer_name}</span>
+                    <span className="block text-xs text-ink-muted">
+                      {r.code} · {r.project_name}
+                    </span>
+                  </span>
+                  <span className="font-medium tabular-nums">{formatBdt(r.amount)}</span>
+                </div>
+                <Badge tone={WITHDRAWAL_STATUS_META[r.status].tone}>
+                  {WITHDRAWAL_STATUS_META[r.status].label}
+                </Badge>
+              </div>
+            )}
+          />
+        </div>
       </Card>
-      {pay && <PayWithdrawalModal id={pay.withdrawal.id} amount={pay.withdrawal.amount} who={`${pay.holder_name} · ${pay.withdrawal.pay_to}`} onClose={() => setPay(null)} />}
-      {reject && <RejectWithdrawalModal id={reject.withdrawal.id} onClose={() => setReject(null)} />}
+
+      {paying && (
+        <PayModal
+          request={paying}
+          onClose={() => {
+            setPaying(null);
+            void refresh();
+          }}
+        />
+      )}
+      {rejecting && (
+        <RejectModal
+          request={rejecting}
+          onClose={() => {
+            setRejecting(null);
+            void refresh();
+          }}
+        />
+      )}
     </>
+  );
+}
+
+function PayModal({ request, onClose }: { request: ApiWithdrawal; onClose: () => void }) {
+  const [paidOn, setPaidOn] = useState(todayLocal());
+  const [reference, setReference] = useState('');
+  const [notes, setNotes] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  return (
+    <Modal
+      open
+      title="Record the payout"
+      subtitle={`${request.code} · ${request.customer_name} · ${formatBdt(request.amount)}`}
+      icon={Banknote}
+      size="sm"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            disabled={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await withdrawalsApi.pay(request.id, {
+                  paid_on: paidOn,
+                  reference_no: reference.trim() || null,
+                  notes: notes.trim() || null,
+                });
+                onClose();
+              } catch (e) {
+                setError(messageOf(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Mark as paid
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-ink-muted">
+        Paying to {WITHDRAWAL_METHOD_LABEL[request.method].toLowerCase()}:{' '}
+        <strong className="text-ink">{request.pay_to}</strong>
+      </p>
+      <div className="grid gap-4 sm:grid-cols-2">
+        <Field label="Paid on" required>
+          <TextInput
+            type="date"
+            max={todayLocal()}
+            value={paidOn}
+            onChange={(e) => setPaidOn(e.target.value)}
+          />
+        </Field>
+        <Field label="Reference" hint="Transaction or cheque number">
+          <TextInput value={reference} onChange={(e) => setReference(e.target.value)} />
+        </Field>
+      </div>
+      <Field label="Note" className="mt-4">
+        <TextArea value={notes} onChange={(e) => setNotes(e.target.value)} />
+      </Field>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+    </Modal>
+  );
+}
+
+function RejectModal({ request, onClose }: { request: ApiWithdrawal; onClose: () => void }) {
+  const [reason, setReason] = useState('');
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+
+  return (
+    <Modal
+      open
+      title="Refuse this request"
+      subtitle={`${request.code} · ${formatBdt(request.amount)}`}
+      icon={XCircle}
+      size="sm"
+      onClose={onClose}
+      footer={
+        <>
+          <Button variant="outline" onClick={onClose}>
+            Cancel
+          </Button>
+          <Button
+            variant="danger"
+            disabled={busy || reason.trim().length < 3}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await withdrawalsApi.reject(request.id, reason.trim());
+                onClose();
+              } catch (e) {
+                setError(messageOf(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            Refuse
+          </Button>
+        </>
+      }
+    >
+      <p className="mb-3 text-sm text-ink-muted">
+        The amount goes back to their balance, and they are told why.
+      </p>
+      <Field label="Why" required>
+        <TextArea
+          value={reason}
+          onChange={(e) => setReason(e.target.value)}
+          placeholder="e.g. Bank account not verified yet"
+        />
+      </Field>
+      {error && <p className="mt-3 text-sm text-red-600">{error}</p>}
+    </Modal>
   );
 }

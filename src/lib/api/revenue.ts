@@ -214,6 +214,115 @@ export const revenueApi = {
   },
 };
 
+/* ------------------------------------------------------------------ *
+ * Across projects: distributions and payouts
+ * ------------------------------------------------------------------ */
+
+export interface ApiPeriodRow extends ApiRevenuePeriod {
+  project_name: string;
+  /** how many holders were credited, once it is declared */
+  holders: number;
+}
+
+export interface ApiProfitBalance {
+  project_id: string;
+  project_name: string;
+  customer_id: string;
+  credited: number;
+  paid_out: number;
+  /** asked for and not yet paid or refused */
+  pending: number;
+  available: number;
+}
+
+export interface ApiWithdrawal {
+  id: string;
+  code: string;
+  project_id: string;
+  project_name: string;
+  holder_type: 'customer' | 'partner';
+  customer_id: string | null;
+  customer_code: string | null;
+  customer_name: string | null;
+  customer_phone: string | null;
+  amount: number;
+  method: 'bank_transfer' | 'bkash' | 'nagad' | 'cheque' | 'cash';
+  pay_to: string;
+  status: 'requested' | 'approved' | 'paid' | 'rejected';
+  requested_on: string;
+  channel: string;
+  decided_on: string | null;
+  reject_reason: string | null;
+  paid_on: string | null;
+  account_id: string | null;
+  reference_no: string | null;
+  notes: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export const distributionsApi = {
+  /** Every closed period across every project. */
+  periods(query: { project_id?: string; status?: string } = {}, signal?: AbortSignal) {
+    return api.get<ApiPeriodRow[]>('/revenue-periods', { ...query }, signal);
+  },
+};
+
+export const withdrawalsApi = {
+  list(
+    query: { project_id?: string; customer_id?: string; status?: string; page_size?: number } = {},
+    signal?: AbortSignal,
+  ): Promise<Page<ApiWithdrawal>> {
+    return api.list<ApiWithdrawal>('/profit-withdrawals', { ...query }, signal);
+  },
+
+  /** What one investor could ask for, project by project. */
+  async balances(customerId: string, signal?: AbortSignal): Promise<ApiProfitBalance[]> {
+    const { balances } = await api.get<{ balances: ApiProfitBalance[] }>(
+      '/profit-withdrawals',
+      { balances_for: customerId },
+      signal,
+    );
+    return balances;
+  },
+
+  request(input: {
+    project_id: string;
+    customer_id: string;
+    amount: number;
+    method: ApiWithdrawal['method'];
+    pay_to: string;
+  }): Promise<ApiWithdrawal> {
+    return api.post<ApiWithdrawal>('/profit-withdrawals', input);
+  },
+
+  approve(id: string): Promise<ApiWithdrawal> {
+    return api.patch<ApiWithdrawal>(`/profit-withdrawals/${id}`, { action: 'approve' });
+  },
+
+  reject(id: string, reason: string): Promise<ApiWithdrawal> {
+    return api.patch<ApiWithdrawal>(`/profit-withdrawals/${id}`, { action: 'reject', reason });
+  },
+
+  pay(
+    id: string,
+    input: { paid_on: string; reference_no?: string | null; notes?: string | null },
+  ): Promise<ApiWithdrawal> {
+    return api.patch<ApiWithdrawal>(`/profit-withdrawals/${id}`, { action: 'pay', ...input });
+  },
+};
+
+export const withdrawalKeys = {
+  all: ['withdrawals'] as const,
+  list: (query: object) => ['withdrawals', 'list', query] as const,
+  balances: (customerId: string) => ['withdrawals', 'balances', customerId] as const,
+};
+
+export const distributionKeys = {
+  all: ['distributions'] as const,
+  periods: (query: object) => ['distributions', 'periods', query] as const,
+};
+
 export const revenueKeys = {
   all: ['revenue'] as const,
   policy: (projectId: string) => ['revenue', 'policy', projectId] as const,

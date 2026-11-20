@@ -982,6 +982,71 @@ export async function recordPayment(
   return getSale(principal, saleId);
 }
 
+/* ------------------------------------------------------------------ *
+ * Money that is not cash
+ * ------------------------------------------------------------------ */
+
+/** What this purchase owes as of a day — overdue principal plus late fees. */
+export async function dueNowOn(client: Tx, saleId: string, asOf: string): Promise<number> {
+  const sale = await client.shareSale.findUnique({ where: { id: saleId }, select: SALE_SELECT });
+  if (!sale) return 0;
+  if (sale.status !== 'agreement_signed' && sale.status !== 'fully_paid') return 0;
+  const view = await viewOf(client, sale, asOf);
+  return view.due_now;
+}
+
+/**
+ * Pays part of a purchase out of the holder's own declared profit
+ * (REVENUE-SHARE-PLAN.md §5.2).
+ *
+ * It is a real payment on the schedule — late fees first, oldest row first,
+ * like any other — written with method `profit_adjustment` so the file shows
+ * that no cash arrived. Called by the revenue service inside the declaring
+ * transaction, which is why it takes the client rather than opening its own.
+ */
+export async function recordProfitAdjustment(
+  client: Tx,
+  saleId: string,
+  amount: number,
+  paidOn: string,
+): Promise<void> {
+  const sale = await loadSale(client, saleId);
+  const view = await viewOf(client, sale, paidOn);
+  const take = Math.min(Math.round(amount), Math.round(maxSharePayable(view)));
+  if (take <= 0) return;
+
+  const allocations = allocateSharePayment(view, take);
+  const principalPaid = allocations.reduce((t, a) => t + a.principal, 0);
+  const lateFee = allocations.reduce((t, a) => t + a.late_fee, 0);
+
+  await client.sharePayment.create({
+    data: {
+      code: await nextCode(client, 'share_payment'),
+      sale_id: saleId,
+      paid_on: toDate(paidOn),
+      amount: new Prisma.Decimal(principalPaid + lateFee),
+      principal: new Prisma.Decimal(principalPaid),
+      late_fee: new Prisma.Decimal(lateFee),
+      method: 'profit_adjustment',
+      notes: 'Paid from this holder’s declared profit',
+      channel: 'office',
+      created_by: currentActorId(),
+      allocations: {
+        create: allocations.map((a) => ({
+          installment_id: a.installment_id,
+          principal: new Prisma.Decimal(a.principal),
+          late_fee: new Prisma.Decimal(a.late_fee),
+        })),
+      },
+    },
+  });
+
+  const after = await viewOf(client, sale);
+  if (after.schedule.length > 0 && after.schedule.every((r) => r.status === 'paid')) {
+    await client.shareSale.update({ where: { id: saleId }, data: { status: 'fully_paid' } });
+  }
+}
+
 /**
  * Corrects a receipt — by writing its opposite, never by changing it.
  *

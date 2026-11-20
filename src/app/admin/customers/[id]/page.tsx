@@ -5,6 +5,7 @@ import { useParams, useRouter } from 'next/navigation';
 import { useState, type ReactNode } from 'react';
 import { ArrowLeft, CircleUserRound, Pencil, PieChart, Trash2, UserRound } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
+import { CustomerEarnings } from '@/components/admin/revenue/CustomerEarnings';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -24,7 +25,7 @@ import { formatBdt, formatDate, formatPhone } from '@/lib/utils/format';
  * `customer.holdings` — how many purchases, what they are worth, what has been
  * paid — so the person's own page is not silent about their money meanwhile.
  */
-type Tab = 'overview' | 'documents';
+type Tab = 'overview' | 'earnings' | 'documents';
 
 
 function Row({ label, value }: { label: string; value: ReactNode }) {
@@ -73,6 +74,8 @@ export default function CustomerDetailPage() {
 
   const tabs: { key: Tab; label: string; show: boolean }[] = [
     { key: 'overview', label: 'Overview', show: true },
+    // REVENUE-SHARE-PLAN.md §5.4 — the profit their holdings have earned
+    { key: 'earnings', label: 'Earnings', show: isInvestor },
     { key: 'documents', label: 'Documents', show: true },
   ];
 
@@ -198,6 +201,8 @@ export default function CustomerDetailPage() {
               </Card>
             </div>
           )}
+
+          {tab === 'earnings' && <CustomerEarnings customerId={id} />}
 
           {/* one Documents tab in one design (feedback D3): the customer file, then anything else on the customer */}
           {tab === 'documents' && (

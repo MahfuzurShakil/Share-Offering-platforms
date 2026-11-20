@@ -22,6 +22,7 @@ export const SOFT_DELETE_MODELS = new Set([
   'RevenuePolicy',
   'RevenueEntry',
   'RevenuePeriod',
+  'ProfitWithdrawal',
   /*
    * Not here, and never: ShareInstallment, SharePayment and
    * SharePaymentAllocation. A payment is corrected by a reversing payment, and
