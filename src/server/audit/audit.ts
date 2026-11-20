@@ -38,6 +38,10 @@ const TABLE_OF: Record<string, string> = {
   ShareInstallment: 'share_installments',
   SharePayment: 'share_payments',
   SharePaymentAllocation: 'share_payment_allocations',
+  RevenuePolicy: 'revenue_policies',
+  RevenueEntry: 'revenue_entries',
+  RevenuePeriod: 'revenue_periods',
+  ProfitAllocation: 'profit_allocations',
 };
 
 type Json = Prisma.InputJsonValue;

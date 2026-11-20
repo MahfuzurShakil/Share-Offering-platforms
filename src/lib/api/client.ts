@@ -73,7 +73,7 @@ function toSearch(query?: Query): string {
 }
 
 async function request<T>(
-  method: 'GET' | 'POST' | 'PATCH' | 'DELETE',
+  method: 'GET' | 'POST' | 'PUT' | 'PATCH' | 'DELETE',
   path: string,
   options: { body?: unknown; query?: Query; signal?: AbortSignal } = {},
 ): Promise<{ data: T; meta?: ListMeta }> {
@@ -130,6 +130,11 @@ export const api = {
 
   async post<T>(path: string, body?: unknown): Promise<T> {
     return (await request<T>('POST', path, { body })).data;
+  },
+
+  /** For the one-per-parent records a caller replaces whole, like a policy. */
+  async put<T>(path: string, body?: unknown): Promise<T> {
+    return (await request<T>('PUT', path, { body })).data;
   },
 
   async patch<T>(path: string, body?: unknown): Promise<T> {

@@ -476,10 +476,14 @@ model Project {
   created_by                  String?               @db.Uuid
   deleted_at                  DateTime?             @db.Timestamptz
 
-  manager     User?                   @relation("project_manager", fields: [project_manager_id], references: [id])
-  assignments UserProjectAssignment[]
-  offerings   ShareOffering[]
-  share_sales ShareSale[]
+  manager            User?                   @relation("project_manager", fields: [project_manager_id], references: [id])
+  assignments        UserProjectAssignment[]
+  offerings          ShareOffering[]
+  share_sales        ShareSale[]
+  revenue_policy     RevenuePolicy?
+  revenue_entries    RevenueEntry[]
+  revenue_periods    RevenuePeriod[]
+  profit_allocations ProfitAllocation[]
 
   @@index([status])
   @@index([sales_status])
@@ -554,7 +558,8 @@ model Customer {
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
 
-  sales ShareSale[]
+  sales       ShareSale[]
+  allocations ProfitAllocation[]
 
   @@index([name])
   @@index([created_at])
@@ -834,4 +839,238 @@ model SharePaymentAllocation {
   @@index([payment_id])
   @@index([installment_id])
   @@map("share_payment_allocations")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * Profit sharing (S3) — REVENUE-SHARE-PLAN.md
+ * What the project earns, what it costs to run, and how the profit is divided
+ * among the people who own it. The arithmetic — the statement, who is
+ * eligible, how a declared amount splits — lives in
+ * `src/lib/domain/revenue-share.ts` and is unit-tested there; these tables are
+ * what it reads and what it freezes.
+ * ------------------------------------------------------------------
+ */
+
+enum RevenueEntryFrequency {
+  daily
+  monthly
+  quarterly
+}
+
+enum DistributionFrequency {
+  monthly
+  quarterly
+  half_yearly
+  yearly
+}
+
+enum MgmtFeeType {
+  none
+  pct_income
+  pct_profit
+  fixed
+}
+
+enum LossRule {
+  /// no sharing until past losses are covered
+  recover_first
+  ignore
+}
+
+enum EligibilityRule {
+  /// only holders who have paid in full
+  fully_paid
+  /// signed holders, in proportion to what they have paid
+  pro_rata_paid
+  /// every signed holder, in full
+  all_signed
+}
+
+enum WithdrawalWindow {
+  any_time
+  after_declare
+  day_of_month
+}
+
+/// How one project shares what it earns. Without it a project has no Income &
+/// Profit tab at all, which is how a project that only sells shares stays out
+/// of this module.
+model RevenuePolicy {
+  id         String @id @default(uuid(7)) @db.Uuid
+  project_id String @unique @db.Uuid
+
+  entry_frequency        RevenueEntryFrequency @default(daily)
+  distribution_frequency DistributionFrequency @default(quarterly)
+  /// the first period starts here; later ones follow by the frequency
+  first_period_start     DateTime              @db.Date
+
+  /// % of profit (after past loss) kept back for repairs
+  reserve_pct         Decimal     @default(10) @db.Decimal(6, 3)
+  mgmt_fee_type       MgmtFeeType @default(none)
+  /// % for the pct types, taka per period for `fixed`
+  mgmt_fee_value      Decimal     @default(0) @db.Decimal(18, 2)
+  /// source tax kept from each holder's share
+  tax_withholding_pct Decimal     @default(10) @db.Decimal(6, 3)
+
+  loss_rule         LossRule        @default(recover_first)
+  eligibility_rule  EligibilityRule @default(pro_rata_paid)
+  /// a holding signed mid-period shares by days held
+  prorate_days      Boolean         @default(true)
+  /// loan principal due in a period comes off what can be shared
+  repay_loans_first Boolean         @default(false)
+
+  min_withdrawal         Decimal          @default(5000) @db.Decimal(18, 2)
+  withdrawal_window      WithdrawalWindow @default(any_time)
+  /// days after a declaration, or the day of the month
+  withdrawal_window_days Int              @default(0)
+  /// a customer's share pays their overdue installments first
+  adjust_overdue_first   Boolean          @default(true)
+  notes                  String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project Project @relation(fields: [project_id], references: [id])
+
+  @@map("revenue_policies")
+}
+
+enum RevenueDirection {
+  income
+  cost
+}
+
+/// One line of what the project earned or spent running. Deliberately apart
+/// from construction cost: building the hotel is capital, running it is
+/// operating, and a project can have both.
+model RevenueEntry {
+  id           String           @id @default(uuid(7)) @db.Uuid
+  code         String           @unique @db.VarChar(40)
+  project_id   String           @db.Uuid
+  entry_date   DateTime         @db.Date
+  direction    RevenueDirection
+  /// from lookup_values: revenue_income_head / revenue_expense_head
+  head         String           @db.VarChar(120)
+  amount       Decimal          @db.Decimal(18, 2)
+  /// where the money went in or came out; what puts it in Cash Position
+  account_id   String?          @db.Uuid
+  reference_no String?          @db.VarChar(120)
+  notes        String?
+
+  /// the period it was counted in, set when that period is closed; an entry
+  /// with one cannot be changed any more
+  period_id String? @db.Uuid
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project Project        @relation(fields: [project_id], references: [id])
+  period  RevenuePeriod? @relation(fields: [period_id], references: [id])
+
+  @@index([project_id, entry_date])
+  @@index([period_id])
+  @@map("revenue_entries")
+}
+
+/// open -> closed (Accounts) -> approved (Management) -> declared.
+/// A period is a row only once it is closed; until then it is just dates.
+enum RevenuePeriodStatus {
+  closed
+  approved
+  declared
+  cancelled
+}
+
+/// One profit period and its frozen statement (plan section 2.3).
+model RevenuePeriod {
+  id           String              @id @default(uuid(7)) @db.Uuid
+  code         String              @unique @db.VarChar(40)
+  project_id   String              @db.Uuid
+  period_start DateTime            @db.Date
+  period_end   DateTime            @db.Date
+  label        String              @db.VarChar(80)
+  status       RevenuePeriodStatus @default(closed)
+
+  /// the statement, worked out by the domain and frozen at closing
+  income             Decimal @db.Decimal(18, 2)
+  cost               Decimal @db.Decimal(18, 2)
+  operating_profit   Decimal @db.Decimal(18, 2)
+  loss_brought_in    Decimal @default(0) @db.Decimal(18, 2)
+  reserve            Decimal @default(0) @db.Decimal(18, 2)
+  mgmt_fee           Decimal @default(0) @db.Decimal(18, 2)
+  loan_principal_due Decimal @default(0) @db.Decimal(18, 2)
+  available          Decimal @default(0) @db.Decimal(18, 2)
+  loss_carried_out   Decimal @default(0) @db.Decimal(18, 2)
+
+  /// set on approval, at most `available`
+  declared    Decimal   @default(0) @db.Decimal(18, 2)
+  /// the day ownership is read on, fixed when the period is declared
+  record_date DateTime? @db.Date
+
+  closed_by   String?   @db.Uuid
+  approved_by String?   @db.Uuid
+  approved_on DateTime? @db.Date
+  declared_by String?   @db.Uuid
+  declared_on DateTime? @db.Date
+  notes       String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project     Project            @relation(fields: [project_id], references: [id])
+  entries     RevenueEntry[]
+  allocations ProfitAllocation[]
+
+  @@unique([project_id, period_start])
+  @@index([project_id, status])
+  @@map("revenue_periods")
+}
+
+enum ProfitHolderType {
+  customer
+  /// the owners' side: company partners and project investors
+  partner
+}
+
+/// One holder's frozen share of one declared period (plan section 5.1).
+///
+/// Financial: written once, when the period is declared, and never changed.
+/// A mistake is corrected by an adjustment in the next period, which is what
+/// "the point of no return" in the plan means.
+model ProfitAllocation {
+  id            String           @id @default(uuid(7)) @db.Uuid
+  period_id     String           @db.Uuid
+  project_id    String           @db.Uuid
+  holder_type   ProfitHolderType
+  customer_id   String?          @db.Uuid
+  partner_id    String?          @db.Uuid
+  share_sale_id String?          @db.Uuid
+
+  /// ownership on the record date, in % of the project
+  ownership_pct      Decimal @db.Decimal(9, 6)
+  /// 1 = a full share; less for an unpaid or part-period holding
+  eligibility_factor Decimal @db.Decimal(9, 6)
+  gross              Decimal @db.Decimal(18, 2)
+  tax_withheld       Decimal @default(0) @db.Decimal(18, 2)
+  /// paid onto overdue installments instead of into the balance
+  adjusted_to_dues   Decimal @default(0) @db.Decimal(18, 2)
+  net_credited       Decimal @db.Decimal(18, 2)
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  period   RevenuePeriod @relation(fields: [period_id], references: [id])
+  project  Project       @relation(fields: [project_id], references: [id])
+  customer Customer?     @relation(fields: [customer_id], references: [id])
+
+  @@index([project_id, customer_id])
+  @@index([period_id])
+  @@map("profit_allocations")
 }

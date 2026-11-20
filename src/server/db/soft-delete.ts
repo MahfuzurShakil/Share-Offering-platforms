@@ -19,12 +19,18 @@ export const SOFT_DELETE_MODELS = new Set([
   'Customer',
   'ShareOffering',
   'ShareSale',
+  'RevenuePolicy',
+  'RevenueEntry',
+  'RevenuePeriod',
   /*
    * Not here, and never: ShareInstallment, SharePayment and
    * SharePaymentAllocation. A payment is corrected by a reversing payment, and
    * the database refuses to update or delete one at all (the trigger in
    * `20261119000000_share_sale_slice`). An installment is the agreed schedule,
    * which is rewritten in place while a purchase is still being arranged.
+   * ProfitAllocation is not here either: a holder's share of a declared
+   * period is frozen when it is written, and a mistake is corrected by an
+   * adjustment in the next period (REVENUE-SHARE-PLAN.md section 2.3).
    */
 ]);
 
