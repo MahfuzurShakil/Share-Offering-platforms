@@ -16,6 +16,7 @@ export const SOFT_DELETE_MODELS = new Set([
   'User',
   'Document',
   'Project',
+  'Lead',
   'Customer',
   'ShareOffering',
   'ShareSale',

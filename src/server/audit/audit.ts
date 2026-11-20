@@ -32,6 +32,8 @@ const TABLE_OF: Record<string, string> = {
   UserProjectAssignment: 'user_project_assignments',
   Document: 'documents',
   Project: 'projects',
+  Lead: 'leads',
+  LeadActivity: 'lead_activities',
   Customer: 'customers',
   ShareOffering: 'share_offerings',
   ShareSale: 'share_sales',

@@ -31,3 +31,21 @@ export async function listAssignableManagers(): Promise<AssignableUser[]> {
     orderBy: { name: 'asc' },
   });
 }
+
+/** The roles that carry leads (`domain/lead.ts` — assignment is manual). */
+const SALES_ROLES = ['sales_executive', 'sales_manager', 'head_of_sales'];
+
+/**
+ * Who a lead can be handed to.
+ *
+ * `super_admin` is in the list as well, because on a fresh install it is the
+ * only user there is — without it the first lead could not be assigned to
+ * anybody at all.
+ */
+export async function listSalesTeam(): Promise<AssignableUser[]> {
+  return prisma.user.findMany({
+    where: { status: 'active', role_code: { in: [...SALES_ROLES, 'super_admin'] } },
+    select: { id: true, name: true, role_code: true },
+    orderBy: { name: 'asc' },
+  });
+}

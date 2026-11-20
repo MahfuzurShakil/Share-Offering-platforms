@@ -162,6 +162,7 @@ model User {
   projects UserProjectAssignment[]
   sessions Session[]
   managed  Project[]               @relation("project_manager")
+  leads    Lead[]                  @relation("lead_assignee")
 
   @@index([status])
   @@map("users")
@@ -485,12 +486,138 @@ model Project {
   revenue_periods    RevenuePeriod[]
   profit_allocations ProfitAllocation[]
   profit_withdrawals ProfitWithdrawal[]
+  leads              Lead[]
 
   @@index([status])
   @@index([sales_status])
   @@index([is_public, is_featured])
   @@index([created_at])
   @@map("projects")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * Leads / CRM (S3) — SALES-FLOW-PLAN.md, Scope v3 §4
+ * Where the story starts: an inquiry arrives, somebody works it, and it ends
+ * either as an investor or as a reason it did not.
+ * The phone number is the dedup key, exactly as it is on `customers`: a
+ * repeat caller joins their own lead as another activity rather than becoming
+ * a second row, so one person's conversation stays in one place.
+ * `interested_unit_id` is deliberately absent — units are flat sale, which is
+ * Phase 2 (AGENTS.md). A lead here is interested in a project.
+ * ------------------------------------------------------------------
+ */
+
+/// The pipeline (Scope v3 §4.2). `booked` is never set by hand: it follows a
+/// real share purchase, and releasing the last live purchase puts the lead
+/// back in `negotiation`.
+enum LeadStatus {
+  new
+  contacted
+  site_visit_scheduled
+  site_visit_done
+  negotiation
+  booked
+  lost
+}
+
+/// Where the inquiry came from. A closed set the software reports on, so an
+/// ENUM rather than a lookup (AGENTS.md).
+enum LeadSource {
+  website_form
+  whatsapp
+  facebook_ad
+  walk_in
+  referral
+  phone_call
+  other
+}
+
+/// What a follow-up entry was. `status_change` is written by the service when
+/// a lead moves; the rest a person logs.
+enum LeadActivityType {
+  call
+  whatsapp
+  email
+  site_visit
+  meeting
+  status_change
+  other
+}
+
+/// One inquiry, from whoever it came from, through to booked or lost.
+model Lead {
+  id     String     @id @default(uuid(7)) @db.Uuid
+  code   String     @unique @db.VarChar(40)
+  name   String     @db.VarChar(200)
+  /// the dedup key (Scope v3 §4.5) — normalised by `domain/phone.ts`
+  phone  String     @unique @db.VarChar(20)
+  email  String?    @db.VarChar(200)
+  source LeadSource
+  status LeadStatus @default(new)
+
+  inquiry_message       String?
+  interested_project_id String? @db.Uuid
+  budget_range          String? @db.VarChar(80)
+  /// the Sales Executive who owns the follow-up; assignment is manual (§4.7)
+  assigned_to           String? @db.Uuid
+  /// filled when status = lost, cleared on a revive
+  lost_reason           String?
+
+  /// website attribution (PUBLIC-WEBSITE-MASTER-PLAN.md §10.2); absent on a
+  /// lead the sales desk typed in
+  page_url     String? @db.VarChar(400)
+  utm_source   String? @db.VarChar(120)
+  utm_medium   String? @db.VarChar(120)
+  utm_campaign String? @db.VarChar(120)
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project    Project?       @relation(fields: [interested_project_id], references: [id])
+  assignee   User?          @relation("lead_assignee", fields: [assigned_to], references: [id])
+  activities LeadActivity[]
+  customers  Customer[]
+
+  @@index([status])
+  @@index([source])
+  @@index([assigned_to])
+  @@index([interested_project_id])
+  @@index([created_at])
+  @@map("leads")
+}
+
+/// The follow-up log (Scope v3 §4.4) — every call, message and visit.
+///
+/// The newest entry's `next_follow_up_date` is the lead's open follow-up: a
+/// later entry supersedes an earlier one, which is why the daily task list
+/// reads the latest row per lead rather than all of them.
+///
+/// No `deleted_at`: this is the trail a lead is read from, and an entry worth
+/// correcting is corrected by logging what actually happened. It goes when the
+/// lead itself is hard-deleted.
+model LeadActivity {
+  id                  String           @id @default(uuid(7)) @db.Uuid
+  lead_id             String           @db.Uuid
+  activity_type       LeadActivityType
+  notes               String
+  /// when it happened, not when it was typed
+  activity_date       DateTime         @db.Timestamptz
+  next_follow_up_date DateTime?        @db.Date
+  /// what a completed stage recorded (`domain/lead-stages.ts`), label → value
+  details             Json?
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  lead Lead @relation(fields: [lead_id], references: [id], onDelete: Cascade)
+
+  @@index([lead_id, activity_date])
+  @@index([next_follow_up_date])
+  @@map("lead_activities")
 }
 
 /**
@@ -558,6 +685,8 @@ model Customer {
   updated_at DateTime  @updatedAt @db.Timestamptz
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
+
+  lead Lead? @relation(fields: [lead_id], references: [id])
 
   sales       ShareSale[]
   allocations ProfitAllocation[]
