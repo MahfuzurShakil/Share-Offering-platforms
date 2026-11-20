@@ -1,22 +1,22 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { CalendarClock, MessageSquarePlus, PhoneCall } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useSession } from '@/lib/auth/session';
-import type { LeadActivity, LeadActivityType } from '@/lib/db/types';
+import { messageOf } from '@/lib/api/client';
+import { leadKeys, leadsApi, type ApiLeadActivity } from '@/lib/api/leads';
+import { useApi, useRefresh } from '@/lib/api/use-api';
+import type { LeadActivityType } from '@/lib/db/types';
 import {
   FOLLOW_UP_META,
   LEAD_ACTIVITY_META,
   MANUAL_ACTIVITY_TYPES,
   followUpState,
 } from '@/lib/domain/lead';
-import { leadActivityRepository } from '@/lib/repositories';
 import { formatDate, todayLocal } from '@/lib/utils/format';
 
 function formatDateTime(value: string): string {
@@ -32,9 +32,9 @@ function formatDateTime(value: string): string {
       });
 }
 
-/** Follow-up log for one lead (Section 4.4) — the trail plus a "log" action. */
+/** Follow-up log for one lead (Scope v3 §4.4) — the trail plus a "log" action. */
 export function LeadActivityPanel({ leadId }: { leadId: string }) {
-  const { userId } = useSession();
+  const refresh = useRefresh([leadKeys.all]);
   const [open, setOpen] = useState(false);
   const [type, setType] = useState<LeadActivityType>('call');
   const [notes, setNotes] = useState('');
@@ -43,7 +43,9 @@ export function LeadActivityPanel({ leadId }: { leadId: string }) {
   const [error, setError] = useState('');
   const [saving, setSaving] = useState(false);
 
-  const activities = useLiveQuery(() => leadActivityRepository.listForLead(leadId), [leadId]);
+  const activities = useApi(['leads', 'activities', leadId], (signal) =>
+    leadsApi.activities(leadId, signal),
+  );
   const today = todayLocal();
 
   function openDialog() {
@@ -59,18 +61,17 @@ export function LeadActivityPanel({ leadId }: { leadId: string }) {
     if (!notes.trim()) return setError('Write what happened');
     setSaving(true);
     try {
-      await leadActivityRepository.log(
-        leadId,
-        {
-          activity_type: type,
-          notes: notes.trim(),
-          // stored as a timestamp; the picker only takes the day
-          activity_date: new Date(`${date}T12:00:00`).toISOString(),
-          next_follow_up_date: followUp || null,
-        },
-        userId,
-      );
+      await leadsApi.log(leadId, {
+        activity_type: type,
+        notes: notes.trim(),
+        // stored as a timestamp; the picker only takes the day
+        activity_date: new Date(`${date}T12:00:00`).toISOString(),
+        next_follow_up_date: followUp || null,
+      });
+      await refresh();
       setOpen(false);
+    } catch (err) {
+      setError(messageOf(err));
     } finally {
       setSaving(false);
     }
@@ -105,7 +106,7 @@ export function LeadActivityPanel({ leadId }: { leadId: string }) {
       ) : (
         <ol className="relative space-y-4 pl-8">
           <span className="absolute bottom-3 left-[11px] top-3 w-px bg-hairline" aria-hidden />
-          {[...activities].reverse().map((activity: LeadActivity, index) => {
+          {[...activities].reverse().map((activity: ApiLeadActivity, index) => {
             const meta = LEAD_ACTIVITY_META[activity.activity_type];
             const state = followUpState(activity.next_follow_up_date, today);
             return (

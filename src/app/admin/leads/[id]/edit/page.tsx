@@ -1,17 +1,24 @@
 'use client';
 
 import { useParams } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { LeadForm } from '@/components/admin/leads/LeadForm';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { leadRepository } from '@/lib/repositories';
+import { leadKeys, leadsApi } from '@/lib/api/leads';
+import { useApiQuery } from '@/lib/api/use-api';
 
 export default function EditLeadPage() {
   const { id } = useParams<{ id: string }>();
-  const lead = useLiveQuery(() => leadRepository.getWithRelations(id), [id]);
+  const { data: lead, isError } = useApiQuery(leadKeys.one(id), (signal) =>
+    leadsApi.get(id, signal),
+  );
 
-  if (lead === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!lead) return <p className="text-sm text-ink-muted">This lead no longer exists.</p>;
+  if (lead === undefined) {
+    return (
+      <p className="text-sm text-ink-muted">
+        {isError ? 'This lead no longer exists.' : 'Loading…'}
+      </p>
+    );
+  }
 
   return (
     <>

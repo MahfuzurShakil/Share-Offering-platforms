@@ -2,20 +2,23 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Check, FileSignature, GitBranch, RotateCcw, XCircle } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { Field, MoneyInput, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useSession } from '@/lib/auth/session';
-import type { Lead, LeadStatus } from '@/lib/db/types';
+import { messageOf } from '@/lib/api/client';
+import { leadKeys, leadsApi, type ApiLead } from '@/lib/api/leads';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { useApi, useRefresh } from '@/lib/api/use-api';
+import type { LeadStatus } from '@/lib/db/types';
 import { LEAD_PIPELINE_STEPS, LEAD_STATUS_META, allowedNextLeadStatuses } from '@/lib/domain/lead';
 import { LOST_REASONS, leadStage, type LeadStage, type LeadStageField } from '@/lib/domain/lead-stages';
-import { leadRepository, projectRepository } from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt, todayLocal } from '@/lib/utils/format';
+
+const PROJECT_PICKER = { page_size: 200, sort: 'name' as const };
 
 /**
  * Pipeline trail and the one move that matters next (client, 2026-10-22).
@@ -23,9 +26,13 @@ import { formatBdt, todayLocal } from '@/lib/utils/format';
  * Like the project status: the main button completes the stage the lead is in
  * ("Mark Site Visit Done") and its popup records what happened there, then the
  * lead moves on. Negotiation is completed by selling shares; any open lead can
- * be booked straight away or marked lost with a reason.
+ * be marked lost with a reason.
+ *
+ * `booked` is not reachable from here at all — the server refuses it, because
+ * a lead becomes booked by a real purchase and a button that could claim one
+ * would make the two halves of the story disagree.
  */
-export function LeadStatusCard({ lead }: { lead: Lead }) {
+export function LeadStatusCard({ lead }: { lead: ApiLead }) {
   const [dialog, setDialog] = useState<'stage' | 'lost' | 'revive' | null>(null);
 
   const isLost = lead.status === 'lost';
@@ -128,8 +135,8 @@ export function LeadStatusCard({ lead }: { lead: Lead }) {
 }
 
 /** Completes the current stage: its date, its own questions, notes and the next follow-up. */
-function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; onClose: () => void }) {
-  const { userId } = useSession();
+function StageDialog({ lead, stage, onClose }: { lead: ApiLead; stage: LeadStage; onClose: () => void }) {
+  const refresh = useRefresh([leadKeys.all]);
   const today = todayLocal();
   const [date, setDate] = useState(today);
   const [answers, setAnswers] = useState<Record<string, string>>(() => ({
@@ -141,7 +148,9 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
   const [errors, setErrors] = useState<string[]>([]);
   const [busy, setBusy] = useState(false);
 
-  const projects = useLiveQuery(() => projectRepository.list(), []);
+  const projects = useApi(projectKeys.list(PROJECT_PICKER), (signal) =>
+    projectsApi.list(PROJECT_PICKER, signal),
+  );
   const set = (key: string, value: string) => setAnswers((a) => ({ ...a, [key]: value }));
 
   async function save() {
@@ -161,7 +170,7 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
 
     // stored as the log will show it: label → readable value
     const details: Record<string, string> = {};
-    const updates: Record<string, string | null> = {};
+    const updates: { budget_range?: string | null; interested_project_id?: string | null } = {};
     let next = followUp || null;
     for (const f of stage.fields) {
       const v = answers[f.key]?.trim();
@@ -172,26 +181,26 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
           : f.type === 'money'
             ? formatBdt(Number(v))
             : v;
-      if (f.updates) updates[f.updates] = v;
+      if (f.updates === 'budget_range') updates.budget_range = v;
+      if (f.updates === 'interested_project_id') updates.interested_project_id = v;
       if (f.followUp) next = v;
     }
     setBusy(true);
     try {
-      await leadRepository.completeStage(
-        lead.id,
-        {
-          to: stage.to,
-          activity_type: typeof stage.activity === 'function' ? stage.activity(answers) : stage.activity,
-          event_date: date,
-          title: stage.title,
-          details,
-          notes,
-          next_follow_up_date: next,
-          updates,
-        },
-        userId,
-      );
+      await leadsApi.completeStage(lead.id, {
+        to: stage.to,
+        activity_type: typeof stage.activity === 'function' ? stage.activity(answers) : stage.activity,
+        event_date: date,
+        title: stage.title,
+        details,
+        notes,
+        next_follow_up_date: next,
+        updates,
+      });
+      await refresh();
       onClose();
+    } catch (err) {
+      setErrors([messageOf(err)]);
     } finally {
       setBusy(false);
     }
@@ -280,8 +289,8 @@ function StageDialog({ lead, stage, onClose }: { lead: Lead; stage: LeadStage; o
 }
 
 /** The lead drops out — a reason from the list, so it can be reported on later. */
-function LostDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const { userId } = useSession();
+function LostDialog({ lead, onClose }: { lead: ApiLead; onClose: () => void }) {
+  const refresh = useRefresh([leadKeys.all]);
   const [reason, setReason] = useState('');
   const [notes, setNotes] = useState('');
   const [error, setError] = useState('');
@@ -292,13 +301,13 @@ function LostDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
     if (reason === 'Other' && !notes.trim()) return setError('Say what the reason was');
     setBusy(true);
     try {
-      await leadRepository.setStatus(
-        lead.id,
-        'lost',
-        { notes: notes.trim() ? `${reason} — ${notes.trim()}` : reason },
-        userId,
-      );
+      await leadsApi.setStatus(lead.id, 'lost', {
+        notes: notes.trim() ? `${reason} — ${notes.trim()}` : reason,
+      });
+      await refresh();
       onClose();
+    } catch (err) {
+      setError(messageOf(err));
     } finally {
       setBusy(false);
     }
@@ -334,9 +343,9 @@ function LostDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
   );
 }
 
-/** A lost lead comes back at the stage that makes sense, history intact (Section 4.6). */
-function ReviveDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
-  const { userId } = useSession();
+/** A lost lead comes back at the stage that makes sense, history intact (§4.6). */
+function ReviveDialog({ lead, onClose }: { lead: ApiLead; onClose: () => void }) {
+  const refresh = useRefresh([leadKeys.all]);
   const options = allowedNextLeadStatuses(lead.status);
   const [target, setTarget] = useState<LeadStatus>(options[0] ?? 'contacted');
   const [notes, setNotes] = useState('');
@@ -348,8 +357,11 @@ function ReviveDialog({ lead, onClose }: { lead: Lead; onClose: () => void }) {
     if (!notes.trim()) return setError('Say why the lead is back');
     setBusy(true);
     try {
-      await leadRepository.setStatus(lead.id, target, { notes, next_follow_up_date: followUp || null }, userId);
+      await leadsApi.setStatus(lead.id, target, { notes, next_follow_up_date: followUp || null });
+      await refresh();
       onClose();
+    } catch (err) {
+      setError(messageOf(err));
     } finally {
       setBusy(false);
     }

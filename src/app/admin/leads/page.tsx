@@ -1,8 +1,7 @@
 'use client';
 
 import Link from 'next/link';
-import { useMemo, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
 import {
   Building2,
   CalendarClock,
@@ -21,6 +20,9 @@ import { PageHeader } from '@/components/ui/PageHeader';
 import { Pagination, usePagination } from '@/components/ui/Pagination';
 import { ResultCard } from '@/components/ui/ResultCard';
 import { ResultsLayout, ViewToggle, type ViewMode } from '@/components/ui/ViewToggle';
+import { leadKeys, leadsApi, salesTeamApi, salesTeamKeys } from '@/lib/api/leads';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { useApi } from '@/lib/api/use-api';
 import { LEAD_SOURCES, LEAD_STATUSES, type LeadSource, type LeadStatus } from '@/lib/db/types';
 import {
   FOLLOW_UP_META,
@@ -28,17 +30,23 @@ import {
   LEAD_STATUS_META,
   followUpState,
 } from '@/lib/domain/lead';
-import {
-  leadRepository,
-  projectRepository,
-  userRepository,
-} from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatDate, formatPhone, todayLocal } from '@/lib/utils/format';
 
 type SortKey = 'newest' | 'oldest' | 'follow_up' | 'name';
 
-/** Lead list — Design Reference A.7, with the daily follow-up queue on top. */
+const PROJECT_PICKER = { page_size: 200, sort: 'name' as const };
+
+/**
+ * Lead list — Design Reference A.7, with the daily follow-up queue on top.
+ *
+ * Every row arrives ready to show: Postgres counts the activity, finds when
+ * the lead was last touched and works out its open follow-up date, where the
+ * prototype read the whole activity table into the browser to do the same.
+ * The banner reads `/leads/summary`, which is the same queue the filters use —
+ * counting raw follow-up dates here is what used to make this screen and the
+ * dashboard disagree about how much work was outstanding.
+ */
 export default function LeadsListPage() {
   const today = todayLocal();
 
@@ -51,88 +59,35 @@ export default function LeadsListPage() {
   const [sort, setSort] = useState<SortKey>('newest');
   const [view, setView] = useState<ViewMode>('list');
 
-  const leads = useLiveQuery(
-    () =>
-      leadRepository.list(
-        {
-          search,
-          status,
-          source,
-          assigned_to: assignedTo,
-          interested_project_id: projectId || undefined,
-          follow_up: followUp,
-        },
-        today,
-      ),
-    [search, status, source, assignedTo, projectId, followUp, today],
+  const query = {
+    search: search.trim() || undefined,
+    status: status === 'all' ? undefined : status,
+    source: source === 'all' ? undefined : source,
+    assigned_to: assignedTo === 'all' ? undefined : assignedTo,
+    interested_project_id: projectId || undefined,
+    follow_up: followUp === 'all' ? undefined : followUp,
+    sort,
+    today,
+    page_size: 200,
+  };
+
+  const leads = useApi(leadKeys.list(query), (signal) => leadsApi.list(query, signal));
+  const summary = useApi(leadKeys.summary(today), (signal) => leadsApi.summary(today, signal));
+  const salesTeam = useApi(salesTeamKeys.all, (signal) => salesTeamApi.list(signal));
+  const projects = useApi(projectKeys.list(PROJECT_PICKER), (signal) =>
+    projectsApi.list(PROJECT_PICKER, signal),
   );
 
-  const allLeads = useLiveQuery(() => leadRepository.getAll(), []);
-  /** every lead's next follow-up date — drives the per-card badge and the sort */
-  const dueMap = useLiveQuery(() => leadRepository.followUpDueMap(), []);
-  /** when each lead was last actually worked — see C-3 on the card footer */
-  const lastActivityMap = useLiveQuery(() => leadRepository.lastActivityMap(), []);
-  /*
-   * The banner reads the same queue the dashboard does, rather than counting
-   * raw follow-up dates: a lead that is booked, lost, or already carries a
-   * live booking is not somebody to ring today, and counting it here made the
-   * two screens disagree about how much work was outstanding.
-   */
-  const queueRows = useLiveQuery(() => leadRepository.followUpQueue(today), [today]);
-  const salesTeam = useLiveQuery(() => userRepository.salesTeam(), []);
-  const projects = useLiveQuery(() => projectRepository.list(), []);
-
-  const teamById = useMemo(
-    () => new Map((salesTeam ?? []).map((u) => [u.id, u])),
-    [salesTeam],
-  );
-  const projectById = useMemo(
-    () => new Map((projects ?? []).map((p) => [p.id, p])),
-    [projects],
-  );
-
-  /** Overdue, due-today and unassigned counts, for the queue banner. */
-  const queue = useMemo(() => {
-    let overdue = 0;
-    let dueToday = 0;
-    for (const { date } of queueRows ?? []) {
-      if (date < today) overdue += 1;
-      else if (date === today) dueToday += 1;
-    }
-    /*
-     * Section 9.6 makes assignment a manager's job, and an unassigned lead is
-     * nobody's problem until somebody notices. The filter for them existed;
-     * nothing ever pointed at it, so a website enquiry could sit unowned for
-     * days without appearing on any count.
-     */
-    const unassigned = (allLeads ?? []).filter(
-      (lead) => !lead.assigned_to && lead.status !== 'lost' && lead.status !== 'booked',
-    ).length;
-    return { overdue, dueToday, unassigned };
-  }, [queueRows, allLeads, today]);
-
-  const rows = useMemo(() => {
-    const list = [...(leads ?? [])];
-    switch (sort) {
-      case 'oldest':
-        return list.sort((a, b) => a.created_at.localeCompare(b.created_at));
-      case 'name':
-        return list.sort((a, b) => a.name.localeCompare(b.name));
-      case 'follow_up':
-        return list.sort((a, b) => {
-          const da = dueMap?.get(a.id) ?? '9999-12-31';
-          const dbb = dueMap?.get(b.id) ?? '9999-12-31';
-          return da.localeCompare(dbb);
-        });
-      default:
-        return list.sort((a, b) => b.created_at.localeCompare(a.created_at));
-    }
-  }, [leads, sort, dueMap]);
-
+  const rows = leads ?? [];
   const paged = usePagination(rows);
 
   const loading = leads === undefined;
-  const hasAny = (allLeads?.length ?? 0) > 0;
+  const hasAny = (summary?.total ?? 0) > 0;
+  const queue = {
+    overdue: summary?.overdue ?? 0,
+    dueToday: summary?.due_today ?? 0,
+    unassigned: summary?.unassigned ?? 0,
+  };
   const filtersActive =
     Boolean(search) ||
     status !== 'all' ||
@@ -360,14 +315,8 @@ export default function LeadsListPage() {
             <>
               <ResultsLayout view={view}>
                 {paged.pageRows.map((lead) => {
-                const meta = LEAD_STATUS_META[lead.status];
-                const due = dueMap?.get(lead.id) ?? null;
-                const state = followUpState(due, today);
-                const lastTouched = lastActivityMap?.get(lead.id) ?? null;
-                const assignee = lead.assigned_to ? teamById.get(lead.assigned_to) : undefined;
-                const project = lead.interested_project_id
-                  ? projectById.get(lead.interested_project_id)
-                  : undefined;
+                  const meta = LEAD_STATUS_META[lead.status];
+                  const state = followUpState(lead.next_follow_up, today);
 
                   return (
                     <ResultCard
@@ -400,9 +349,10 @@ export default function LeadsListPage() {
                             last touched it, which is how a sales manager spots
                             the ones going cold.
                           */}
-                          {lastTouched && ` · Last activity ${formatDate(lastTouched)}`}
-                          {!lastTouched && ' · No activity logged'}
-                          {due && ` · Follow-up ${formatDate(due)}`}
+                          {lead.last_activity_at
+                            ? ` · Last activity ${formatDate(lead.last_activity_at)}`
+                            : ' · No activity logged'}
+                          {lead.next_follow_up && ` · Follow-up ${formatDate(lead.next_follow_up)}`}
                         </>
                       }
                       facts={
@@ -418,15 +368,15 @@ export default function LeadsListPage() {
                               {lead.budget_range}
                             </Badge>
                           )}
-                          {project && (
+                          {lead.project_name && (
                             <Badge tone="teal">
                               <Building2 className="size-3.5" />
-                              {project.name}
+                              {lead.project_name}
                             </Badge>
                           )}
-                          <Badge tone={assignee ? 'blue' : 'amber'}>
+                          <Badge tone={lead.assignee_name ? 'blue' : 'amber'}>
                             <UserRound className="size-3.5" />
-                            {assignee?.name ?? 'Unassigned'}
+                            {lead.assignee_name ?? 'Unassigned'}
                           </Badge>
                         </>
                       }
@@ -450,7 +400,6 @@ export default function LeadsListPage() {
           )}
         </section>
       </div>
-
     </>
   );
 }

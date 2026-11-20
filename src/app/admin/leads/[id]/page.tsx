@@ -2,8 +2,7 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { useEffect, useState, type ReactNode } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState, type ReactNode } from 'react';
 import {
   ArrowLeft,
   Building2,
@@ -13,6 +12,7 @@ import {
   Phone,
   Trash2,
   UserRound,
+  UserRoundPlus,
 } from 'lucide-react';
 import { DocumentsPanel } from '@/components/admin/documents/DocumentsPanel';
 import { LeadActivityPanel } from '@/components/admin/leads/LeadActivityPanel';
@@ -23,8 +23,10 @@ import { Card, CardHeader } from '@/components/ui/Card';
 import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { SelectInput } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useSession } from '@/lib/auth/session';
-import type { User } from '@/lib/db/types';
+import { messageOf } from '@/lib/api/client';
+import { customerKeys } from '@/lib/api/customers';
+import { leadKeys, leadsApi, salesTeamApi, salesTeamKeys } from '@/lib/api/leads';
+import { useApi, useApiQuery, useRefresh } from '@/lib/api/use-api';
 import {
   FOLLOW_UP_META,
   LEAD_SOURCE_LABEL,
@@ -32,11 +34,6 @@ import {
   followUpState,
 } from '@/lib/domain/lead';
 import { SALE_HEALTH_META } from '@/lib/domain/share-sale';
-import {
-  customerRepository,
-  leadRepository,
-  userRepository,
-} from '@/lib/repositories';
 import { cn } from '@/lib/utils/cn';
 import { formatDate, formatPhone, todayLocal } from '@/lib/utils/format';
 
@@ -51,33 +48,54 @@ function Row({ label, value }: { label: string; value: ReactNode }) {
   );
 }
 
-/** Lead detail — Design Reference A.8 (sidebar cards + tabbed main column). */
+const saleTone = (status: string) =>
+  status === 'agreement_signed'
+    ? { label: 'Agreement signed', tone: 'teal' as const }
+    : (SALE_HEALTH_META[status as keyof typeof SALE_HEALTH_META] ?? {
+        label: status,
+        tone: 'neutral' as const,
+      });
+
+/**
+ * Lead detail — Design Reference A.8 (sidebar cards + tabbed main column).
+ *
+ * One request brings the lead, its whole follow-up log, the people and project
+ * named on it, and whatever it became: the investor file made from it and what
+ * that investor bought. The prototype asked four separate questions of the
+ * browser's database to assemble the same page.
+ */
 export default function LeadDetailPage() {
   const { id } = useParams<{ id: string }>();
   const router = useRouter();
-  const { userId } = useSession();
   const [tab, setTab] = useState<Tab>('overview');
   const [confirmDelete, setConfirmDelete] = useState(false);
-  const [salesTeam, setSalesTeam] = useState<User[]>([]);
+  const [confirmConvert, setConfirmConvert] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
 
-  const lead = useLiveQuery(() => leadRepository.getWithRelations(id), [id]);
-  /** the customer this lead became through a booking, if any (Section 5.3) */
-  const customer = useLiveQuery(
-    () => (lead ? customerRepository.findByPhone(lead.phone) : Promise.resolve(undefined)),
-    [lead?.phone],
+  const refresh = useRefresh([leadKeys.all, customerKeys.all]);
+  /*
+   * `useApiQuery` rather than `useApi`, for the one thing a request can say
+   * that a browser database could not: the lead is gone. Without the failure
+   * state the page would sit on "Loading…" forever instead of saying so.
+   */
+  const { data: lead, isError } = useApiQuery(leadKeys.one(id), (signal) =>
+    leadsApi.get(id, signal),
   );
+  const salesTeam = useApi(salesTeamKeys.all, (signal) => salesTeamApi.list(signal));
 
-  // a lead that bought shows its purchases: the customer made from it holds them
-  const shares = useLiveQuery(
-    async () => (customer ? customerRepository.listForCustomer(customer.id) : []),
-    [customer?.id],
-  );
-  useEffect(() => {
-    userRepository.salesTeam().then(setSalesTeam);
-  }, []);
+  async function assign(userId: string) {
+    setError('');
+    try {
+      await leadsApi.assign(id, userId || null);
+      await refresh();
+    } catch (err) {
+      setError(messageOf(err));
+    }
+  }
 
-  if (lead === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!lead) {
+  if (lead === undefined) {
+    if (!isError) return <p className="text-sm text-ink-muted">Loading…</p>;
     return (
       <Card>
         <p className="text-sm text-ink-muted">This lead no longer exists.</p>
@@ -128,6 +146,12 @@ export default function LeadDetailPage() {
           </div>
         }
       />
+
+      {error && (
+        <p className="mb-4 rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {error}
+        </p>
+      )}
 
       <div className="grid gap-5 lg:grid-cols-[1fr_320px]">
         <div className="min-w-0 lg:order-1">
@@ -182,7 +206,9 @@ export default function LeadDetailPage() {
                 {(lead.utm_source || lead.utm_campaign) && (
                   <Row
                     label="Campaign"
-                    value={[lead.utm_source, lead.utm_medium, lead.utm_campaign].filter(Boolean).join(' · ')}
+                    value={[lead.utm_source, lead.utm_medium, lead.utm_campaign]
+                      .filter(Boolean)
+                      .join(' · ')}
                   />
                 )}
               </Card>
@@ -245,10 +271,10 @@ export default function LeadDetailPage() {
             <CardHeader title="Assigned To" />
             <SelectInput
               value={lead.assigned_to ?? ''}
-              onChange={(e) => leadRepository.assign(lead.id, e.target.value || null, userId)}
+              onChange={(e) => assign(e.target.value)}
             >
               <option value="">Unassigned</option>
-              {salesTeam.map((u) => (
+              {(salesTeam ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
                 </option>
@@ -273,54 +299,74 @@ export default function LeadDetailPage() {
             )}
           </Card>
 
-          {/* the lead's purchases and the customer they made — no separate "convert" step */}
-          {((shares ?? []).length > 0 || customer) && (
-            <Card>
-              <CardHeader title="Customer & purchases" />
-              {customer && (
-                <Link
-                  href={`/admin/customers/${customer.id}`}
-                  className="flex items-center gap-3 rounded-xl border border-hairline p-3 transition-colors hover:bg-admin-50/60"
-                >
-                  <span className="grid size-10 shrink-0 place-items-center rounded-full bg-admin-50 text-admin-600">
-                    <UserRound className="size-5" />
-                  </span>
-                  <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-ink">{customer.name}</p>
-                    <p className="text-xs text-ink-muted">{customer.code}</p>
-                  </div>
-                </Link>
-              )}
-              <ul className="mt-3 space-y-1.5">
-                {(shares ?? []).map((s) => (
-                  <li key={s.id}>
-                    <Link
-                      href={`/admin/share-sale/sales/${s.id}`}
-                      className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50"
-                    >
-                      <span className="text-admin-700">{s.code}</span>
-                      <Badge
-                        tone={
-                          s.status === 'agreement_signed'
-                            ? 'teal'
-                            : SALE_HEALTH_META[s.status].tone
-                        }
-                      >
-                        {s.status === 'agreement_signed' ? 'Agreement signed' : SALE_HEALTH_META[s.status].label}
-                      </Badge>
-                    </Link>
-                  </li>
-                ))}
-              </ul>
-              {lead.status === 'booked' && (
-                <Link href={`/admin/share-sale?lead=${lead.id}`} className="mt-3 block">
-                  <Button variant="outline" size="sm" className="w-full">
-                    <FileSignature className="size-4" /> Sell more shares
+          {/*
+            Where the lead went. An investor file can be opened from here
+            before anything is sold — the office often wants the KYC on record
+            first — and the lead still only turns Booked when a purchase is
+            confirmed.
+          */}
+          <Card>
+            <CardHeader title="Customer & purchases" />
+            {lead.customer ? (
+              <Link
+                href={`/admin/customers/${lead.customer.id}`}
+                className="flex items-center gap-3 rounded-xl border border-hairline p-3 transition-colors hover:bg-admin-50/60"
+              >
+                <span className="grid size-10 shrink-0 place-items-center rounded-full bg-admin-50 text-admin-600">
+                  <UserRound className="size-5" />
+                </span>
+                <div className="min-w-0">
+                  <p className="truncate text-sm font-medium text-ink">{lead.customer.name}</p>
+                  <p className="text-xs text-ink-muted">{lead.customer.code}</p>
+                </div>
+              </Link>
+            ) : (
+              <>
+                <p className="text-sm text-ink-muted">
+                  No investor file yet. Opening one carries the name and number across, and the
+                  two records stay linked.
+                </p>
+                {lead.status !== 'lost' && (
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    className="mt-3 w-full"
+                    onClick={() => setConfirmConvert(true)}
+                  >
+                    <UserRoundPlus className="size-4" /> Create investor file
                   </Button>
-                </Link>
-              )}
-            </Card>
-          )}
+                )}
+              </>
+            )}
+
+            {lead.purchases.length > 0 && (
+              <ul className="mt-3 space-y-1.5">
+                {lead.purchases.map((s) => {
+                  const tone = saleTone(s.status);
+                  return (
+                    <li key={s.id}>
+                      <Link
+                        href={`/admin/share-sale/sales/${s.id}`}
+                        className="flex items-center justify-between gap-2 rounded-lg px-2 py-1.5 text-sm hover:bg-slate-50"
+                      >
+                        <span className="text-admin-700">{s.code}</span>
+                        <Badge tone={tone.tone}>{tone.label}</Badge>
+                      </Link>
+                    </li>
+                  );
+                })}
+              </ul>
+            )}
+
+            {lead.customer && (
+              <Link href={`/admin/share-sale?lead=${lead.id}`} className="mt-3 block">
+                <Button variant="outline" size="sm" className="w-full">
+                  <FileSignature className="size-4" />{' '}
+                  {lead.purchases.length > 0 ? 'Sell more shares' : 'Sell shares'}
+                </Button>
+              </Link>
+            )}
+          </Card>
 
           <Card>
             <CardHeader title="Next Follow-up" />
@@ -339,9 +385,7 @@ export default function LeadDetailPage() {
                   <CalendarClock className="size-5" />
                 </span>
                 <div>
-                  <p className="text-sm font-medium text-ink">
-                    {formatDate(lead.next_follow_up)}
-                  </p>
+                  <p className="text-sm font-medium text-ink">{formatDate(lead.next_follow_up)}</p>
                   {state !== 'none' && (
                     <Badge tone={FOLLOW_UP_META[state].tone}>{FOLLOW_UP_META[state].label}</Badge>
                   )}
@@ -359,7 +403,11 @@ export default function LeadDetailPage() {
           <Card>
             <CardHeader title="Record" />
             <Row label="Status" value={LEAD_STATUS_META[lead.status].label} />
-            <Row label="Activities" value={lead.activities.length} />
+            <Row label="Activities" value={lead.activity_count} />
+            <Row
+              label="Last activity"
+              value={lead.last_activity_at ? formatDate(lead.last_activity_at) : '—'}
+            />
             <Row label="Created" value={formatDate(lead.created_at)} />
             <Row label="Last updated" value={formatDate(lead.updated_at)} />
           </Card>
@@ -367,15 +415,52 @@ export default function LeadDetailPage() {
       </div>
 
       <ConfirmDialog
+        open={confirmConvert}
+        title="Create investor file"
+        subtitle={`${lead.code} · ${lead.name}`}
+        icon={UserRoundPlus}
+        confirmLabel="Create investor file"
+        message="The name and number go across, and the two records stay linked. Somebody already on file with this number is linked instead of being added twice. The lead keeps its stage — it turns Booked when a purchase is confirmed."
+        busy={busy}
+        onCancel={() => setConfirmConvert(false)}
+        onConfirm={async () => {
+          setBusy(true);
+          setError('');
+          try {
+            const { customer } = await leadsApi.convert(lead.id);
+            await refresh();
+            setConfirmConvert(false);
+            router.push(`/admin/customers/${customer.id}`);
+          } catch (err) {
+            setError(messageOf(err));
+            setConfirmConvert(false);
+          } finally {
+            setBusy(false);
+          }
+        }}
+      />
+
+      <ConfirmDialog
         open={confirmDelete}
         title={`Delete ${lead.code}`}
         subtitle={lead.name}
         confirmLabel="Delete lead"
         message="This deletes the lead with its whole follow-up history and uploaded documents. Marking it lost keeps the history instead — that is usually what you want."
+        busy={busy}
         onCancel={() => setConfirmDelete(false)}
         onConfirm={async () => {
-          await leadRepository.removeCascade(lead.id);
-          router.push('/admin/leads');
+          setBusy(true);
+          setError('');
+          try {
+            await leadsApi.remove(lead.id);
+            await refresh();
+            router.push('/admin/leads');
+          } catch (err) {
+            setError(messageOf(err));
+            setConfirmDelete(false);
+          } finally {
+            setBusy(false);
+          }
         }}
       />
     </>

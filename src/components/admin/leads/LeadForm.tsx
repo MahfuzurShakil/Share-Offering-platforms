@@ -2,29 +2,18 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
+import { useState } from 'react';
 import { AlertTriangle } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
-import { useSession } from '@/lib/auth/session';
-import {
-  BUDGET_RANGE_OPTIONS,
-  LEAD_SOURCES,
-  type Lead,
-  type LeadSource,
-  type Project,
-  type User,
-} from '@/lib/db/types';
+import { fieldErrorsOf, messageOf } from '@/lib/api/client';
+import { leadKeys, leadsApi, salesTeamApi, salesTeamKeys, type ApiLeadDetail } from '@/lib/api/leads';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import { useApi, useRefresh } from '@/lib/api/use-api';
+import { BUDGET_RANGE_OPTIONS, LEAD_SOURCES, type LeadSource } from '@/lib/db/types';
 import { LEAD_SOURCE_LABEL } from '@/lib/domain/lead';
-import {
-  leadRepository,
-  normalizePhone,
-  projectRepository,
-  userRepository,
-  type LeadWithRelations,
-} from '@/lib/repositories';
+import { isMobile, normalizePhone } from '@/lib/domain/phone';
 
 interface FormState {
   name: string;
@@ -33,7 +22,6 @@ interface FormState {
   source: LeadSource;
   inquiry_message: string;
   interested_project_id: string;
-  interested_unit_id: string;
   budget_range: string;
   assigned_to: string;
 }
@@ -45,54 +33,57 @@ const EMPTY: FormState = {
   source: 'walk_in',
   inquiry_message: '',
   interested_project_id: '',
-  interested_unit_id: '',
   budget_range: '',
   assigned_to: '',
 };
 
+const PROJECT_PICKER = { page_size: 200, sort: 'name' as const };
+
 const str = (v: unknown) => (v === null || v === undefined ? '' : String(v));
 
 /**
- * Add / Edit form for Module 3 (Design Reference A.9).
+ * Add / Edit form for the CRM module (Design Reference A.9).
  *
- * On a new lead the phone is checked against existing leads as it is typed:
- * phone is the dedup key (Section 4.5), so a repeat caller must land on the
- * existing lead as an activity rather than becoming a second row.
+ * On a new lead the number is checked against the existing ones as it is typed
+ * — it is the dedup key (Scope v3 §4.5), so a repeat caller must land on their
+ * own lead as an activity rather than becoming a second row. The warning here
+ * is a courtesy; the server is what actually decides, and it answers with
+ * `merged` saying which of the two happened.
  */
-export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
+export function LeadForm({ lead }: { lead?: ApiLeadDetail }) {
   const router = useRouter();
-  const { userId } = useSession();
+  const refresh = useRefresh([leadKeys.all]);
   const isEdit = Boolean(lead);
 
   const [form, setForm] = useState<FormState>(lead ? toFormState(lead) : EMPTY);
-  const [projects, setProjects] = useState<Project[]>([]);
-  const [salesTeam, setSalesTeam] = useState<User[]>([]);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => {
-    projectRepository.list().then(setProjects);
-    userRepository.salesTeam().then(setSalesTeam);
-  }, []);
+  const projects = useApi(projectKeys.list(PROJECT_PICKER), (signal) =>
+    projectsApi.list(PROJECT_PICKER, signal),
+  );
+  const salesTeam = useApi(salesTeamKeys.all, (signal) => salesTeamApi.list(signal));
 
-  // live dedup check — only on a new lead; editing keeps its own number
-  const duplicate =
-    useLiveQuery<Lead | null>(
-      () =>
-        isEdit || normalizePhone(form.phone).length < 11
-          ? Promise.resolve<Lead | null>(null)
-          : leadRepository.findByPhone(form.phone).then((match) => match ?? null),
-      [form.phone, isEdit],
-    ) ?? null;
+  const typedPhone = normalizePhone(form.phone);
+  const match = useApi(
+    leadKeys.byPhone(typedPhone),
+    (signal) => leadsApi.byPhone(typedPhone, signal),
+    { enabled: isMobile(typedPhone) },
+  );
+  const duplicate = match && match.id !== lead?.id ? match : null;
 
-  const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
+  const set = <K extends keyof FormState>(key: K, value: FormState[K]) => {
     setForm((f) => ({ ...f, [key]: value }));
+    setErrors({});
+  };
 
   function validate(): boolean {
     const next: Record<string, string> = {};
     if (!form.name.trim()) next.name = 'Name is required';
     if (!form.phone.trim()) next.phone = 'Phone is required';
-    else if (normalizePhone(form.phone).length < 11) next.phone = 'Enter a full 11-digit number';
+    else if (!isMobile(form.phone)) next.phone = 'Enter a full 11-digit number';
+    // on an edit a clash is an error; on a new lead it is a merge, which is fine
+    else if (duplicate && isEdit) next.phone = `${duplicate.code} already uses this number`;
     if (form.email.trim() && !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(form.email.trim())) {
       next.email = 'Enter a valid email address';
     }
@@ -107,26 +98,28 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
     try {
       const payload = {
         name: form.name.trim(),
-        phone: form.phone.trim(),
+        phone: normalizePhone(form.phone),
         email: form.email.trim() || null,
         source: form.source,
         inquiry_message: form.inquiry_message.trim() || null,
         interested_project_id: form.interested_project_id || null,
-        interested_unit_id: null,
         budget_range: form.budget_range || null,
         assigned_to: form.assigned_to || null,
       };
 
       if (lead) {
-        await leadRepository.update(lead.id, { ...payload, phone: normalizePhone(payload.phone) });
+        await leadsApi.update(lead.id, payload);
+        await refresh();
         router.push(`/admin/leads/${lead.id}`);
         return;
       }
 
-      // dedup lives in the repository, so the public form gets the same rule
-      const { lead: saved } = await leadRepository.captureInquiry(payload, userId);
+      // dedup lives on the server, so the public enquiry form gets the same rule
+      const { lead: saved } = await leadsApi.capture(payload);
+      await refresh();
       router.push(`/admin/leads/${saved.id}`);
-    } finally {
+    } catch (err) {
+      setErrors({ ...fieldErrorsOf(err), form: messageOf(err) });
       setSaving(false);
     }
   }
@@ -175,8 +168,9 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
               This number already belongs to {duplicate.code} — {duplicate.name}
             </p>
             <p className="mt-1 text-xs text-amber-700">
-              Saving will not create a second lead. The inquiry is added to that lead as an
-              activity, so the whole conversation stays in one place.
+              {isEdit
+                ? 'Two leads cannot share a number. Open that lead instead, or correct this one.'
+                : 'Saving will not create a second lead. The inquiry is added to that lead as an activity, so the whole conversation stays in one place.'}
             </p>
             <Link href={`/admin/leads/${duplicate.id}`} className="mt-3 inline-block">
               <Button variant="outline" size="sm">
@@ -221,7 +215,7 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
               onChange={(e) => set('assigned_to', e.target.value)}
             >
               <option value="">Unassigned</option>
-              {salesTeam.map((u) => (
+              {(salesTeam ?? []).map((u) => (
                 <option key={u.id} value={u.id}>
                   {u.name}
                 </option>
@@ -235,7 +229,7 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
               onChange={(e) => set('interested_project_id', e.target.value)}
             >
               <option value="">Not decided</option>
-              {projects.map((p) => (
+              {(projects ?? []).map((p) => (
                 <option key={p.id} value={p.id}>
                   {p.code} — {p.name}
                 </option>
@@ -252,6 +246,12 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
           </Field>
         </div>
       </Card>
+
+      {errors.form && (
+        <p className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-700">
+          {errors.form}
+        </p>
+      )}
 
       <div className="flex justify-end gap-2">
         <Button variant="outline" onClick={() => router.back()} disabled={saving}>
@@ -271,7 +271,7 @@ export function LeadForm({ lead }: { lead?: LeadWithRelations }) {
   );
 }
 
-function toFormState(lead: LeadWithRelations): FormState {
+function toFormState(lead: ApiLeadDetail): FormState {
   return {
     ...EMPTY,
     name: lead.name,
@@ -280,7 +280,6 @@ function toFormState(lead: LeadWithRelations): FormState {
     source: lead.source,
     inquiry_message: str(lead.inquiry_message),
     interested_project_id: str(lead.interested_project_id),
-    interested_unit_id: str(lead.interested_unit_id),
     budget_range: str(lead.budget_range),
     assigned_to: str(lead.assigned_to),
   };
