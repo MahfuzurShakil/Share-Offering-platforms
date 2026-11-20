@@ -193,6 +193,32 @@ export async function requirePerm(
   return { ...staff, level, own_only: isOwnOnly(level) };
 }
 
+/**
+ * The caller, if **any** of these modules lets them, or 403.
+ *
+ * For the handful of reads that fill a picker inside more than one module: the
+ * list of sales people is wanted by whoever assigns a lead and by whoever
+ * builds the org chart, and those are two different rights. Narrowing it to
+ * one would mean a sales manager could not see a name their own screen needs.
+ *
+ * The permission that answered comes back, so a service can still narrow on
+ * `own_only` where it matters.
+ */
+export async function requireAnyPerm(
+  request: NextRequest,
+  modules: PermissionModule[],
+  ability: Ability = 'view',
+): Promise<Permitted> {
+  const staff = await requireStaff(request);
+
+  // `module` as a loop variable is refused by Next's lint rule, hence `key`
+  for (const key of modules) {
+    const level = await levelFor(staff.role, key);
+    if (allows(level, ability)) return { ...staff, level, own_only: isOwnOnly(level) };
+  }
+  throw new AuthError(403, 'forbidden', 'Your role does not allow this.');
+}
+
 /** Whether a scoped user may act on this project at all. */
 export function withinScope(principal: StaffPrincipal, project_id: string | null): boolean {
   if (!project_id) return true;

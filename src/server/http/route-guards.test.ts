@@ -50,7 +50,9 @@ describe('api routes', () => {
     '%s asks who is calling before it answers',
     (name, file) => {
       const source = readFileSync(file, 'utf8');
-      const guarded = /require(Perm|Auth|Staff|Customer)\s*\(/.test(source);
+      // `requireAnyPerm` is here too: a read wanted by two modules behind
+      // different rights is still a read that asks who is calling.
+      const guarded = /require(AnyPerm|Perm|Auth|Staff|Customer)\s*\(/.test(source);
 
       if (name in PUBLIC_ROUTES) {
         expect(guarded, `${name} is listed as public but checks a permission`).toBe(false);

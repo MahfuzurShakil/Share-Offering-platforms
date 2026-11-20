@@ -84,8 +84,18 @@ export interface OrgMemberDto {
   branch_sales_count: number;
 }
 
-/** The tree, as the org chart draws it. */
+/**
+ * The tree, as the org chart draws it.
+ *
+ * The member is nested *and* its derived figures sit on the node, which is the
+ * shape the chart already reads (`n.member.name`, `n.designation`,
+ * `n.branch_sales`). Keeping it means the screen changes by a line instead of
+ * being rewritten — the point of the whole move (PHASE-1-PLAN.md).
+ */
 export interface OrgNode extends OrgMemberDto {
+  member: OrgMemberDto;
+  /** the company partner they are, by name — null until Fund & Partners lands */
+  partner_name: string | null;
   children: OrgNode[];
 }
 
@@ -277,14 +287,19 @@ export async function orgTree(): Promise<OrgNode[]> {
   const seen = new Set<string>();
   const build = (row: MemberRow): OrgNode => {
     seen.add(row.id);
+    const dto = toDto(
+      row,
+      context,
+      row.parent_id ? (byId.get(row.parent_id)?.name ?? null) : null,
+      totals.get(row.id) ?? { size: 0, sales: 0, count: 0 },
+    );
     return {
-      ...toDto(
-        row,
-        context,
-        row.parent_id ? (byId.get(row.parent_id)?.name ?? null) : null,
-        totals.get(row.id) ?? { size: 0, sales: 0, count: 0 },
-      ),
-      children: members.filter((child) => child.parent_id === row.id && !seen.has(child.id)).map(build),
+      ...dto,
+      member: dto,
+      partner_name: null,
+      children: members
+        .filter((child) => child.parent_id === row.id && !seen.has(child.id))
+        .map(build),
     };
   };
 

@@ -1,13 +1,11 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowDown, ArrowUp, FileCog, Plus, Trash2 } from 'lucide-react';
 import { ErrorNote, useAction } from '@/components/admin/share-sale/ShareSaleModals';
 import { Button } from '@/components/ui/Button';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useSession } from '@/lib/auth/session';
 import {
   COMMISSION_BASES,
   COMMISSION_PLAN_STATUSES,
@@ -15,13 +13,23 @@ import {
   type CommissionAppliesTo,
   type CommissionBasis,
   type CommissionCancelRule,
-  type CommissionPlan,
   type CommissionPlanStatus,
   type CommissionTrigger,
 } from '@/lib/db/types';
 import { COMMISSION_BASIS_LABEL, COMMISSION_PLAN_STATUS_META, COMMISSION_TRIGGER_LABEL } from '@/lib/domain/commission';
-import { commissionPlanRepository, orgMemberRepository, projectRepository, shareOfferingRepository } from '@/lib/repositories';
+import { projectKeys, projectsApi } from '@/lib/api/projects';
+import {
+  commissionPlansApi,
+  designationKeys,
+  designationsApi,
+  planKeys,
+  type ApiCommissionPlan,
+} from '@/lib/api/sales-team';
+import { shareOfferingKeys, shareOfferingsApi } from '@/lib/api/share-offerings';
+import { useApi, useRefresh } from '@/lib/api/use-api';
 import { todayLocal } from '@/lib/utils/format';
+
+const PICKER = { page_size: 200 } as const;
 
 interface StageRow {
   key: string;
@@ -48,11 +56,13 @@ const DEFAULT_STAGES: StageRow[] = [
 const valueHint = (b: CommissionBasis) => (b === 'pct' ? '%' : b === 'per_share' ? 'Tk / share' : 'Tk / sale');
 
 /** Create or edit a commission plan: who earns what, and the stages that release it. */
-export function PlanFormModal({ plan, used, onClose }: { plan?: CommissionPlan; used?: number; onClose: () => void }) {
-  const { userId } = useSession();
-  const projects = useLiveQuery(() => projectRepository.getAll(), []);
-  const offerings = useLiveQuery(() => shareOfferingRepository.getAll(), []);
-  const designations = useLiveQuery(() => orgMemberRepository.designations(), []);
+export function PlanFormModal({ plan, used, onClose }: { plan?: ApiCommissionPlan; used?: number; onClose: () => void }) {
+  const refresh = useRefresh([planKeys.all]);
+  const projects = useApi(projectKeys.list(PICKER), (signal) => projectsApi.list(PICKER, signal));
+  const offerings = useApi(shareOfferingKeys.list(PICKER), async (signal) =>
+    (await shareOfferingsApi.page(PICKER, signal)).rows,
+  );
+  const designations = useApi(designationKeys.all, (signal) => designationsApi.list(signal));
   const [f, setF] = useState({
     name: plan?.name ?? '',
     applies_to: plan?.applies_to ?? ('share_sale' as CommissionAppliesTo),
@@ -86,23 +96,32 @@ export function PlanFormModal({ plan, used, onClose }: { plan?: CommissionPlan; 
   const shareOfferings = (offerings ?? []).filter((o) => !f.project_id || o.project_id === f.project_id);
 
   const save = () =>
-    run(
-      () =>
-        commissionPlanRepository.save(
-          {
-            id: plan?.id,
-            ...f,
-            seller_value: Number(f.seller_value),
-            project_id: f.project_id || null,
-            offering_id: f.offering_id || null,
-            effective_to: f.effective_to || null,
-            stages: stages.map((s) => ({ ...s, threshold_pct: s.threshold_pct === '' ? null : Number(s.threshold_pct), release_value: Number(s.release_value) })),
-            overrides: overrides.filter((o) => o.designation_id).map((o) => ({ ...o, value: Number(o.value) })),
-          },
-          userId,
-        ),
-      onClose,
-    );
+    run(async () => {
+      const payload = {
+        ...f,
+        seller_value: Number(f.seller_value),
+        project_id: f.project_id || null,
+        offering_id: f.offering_id || null,
+        effective_to: f.effective_to || null,
+        /*
+         * A stage's key is what its lines point at, so it is stable once
+         * anything has earned — and a plan with earned lines is locked, so
+         * numbering them by position here can never move an existing line.
+         */
+        stages: stages.map((s, i) => ({
+          ...s,
+          key: s.key || `s${i + 1}`,
+          threshold_pct: s.threshold_pct === '' ? null : Number(s.threshold_pct),
+          release_value: Number(s.release_value),
+        })),
+        overrides: overrides
+          .filter((o) => o.designation_id)
+          .map((o) => ({ ...o, value: Number(o.value) })),
+      };
+      if (plan) await commissionPlansApi.update(plan.id, payload);
+      else await commissionPlansApi.create(payload);
+      await refresh();
+    }, onClose);
 
   return (
     <Modal

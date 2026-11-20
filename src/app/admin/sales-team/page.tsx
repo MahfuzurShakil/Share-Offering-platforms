@@ -2,7 +2,6 @@
 
 import Link from 'next/link';
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { ArrowRightLeft, ChevronDown, ChevronRight, GripVertical, Network, Plus, TrendingUp, UserPlus, Users } from 'lucide-react';
 import { Kpi } from '@/components/admin/share-sale/bits';
 import { MemberFormModal, MoveMemberModal } from '@/components/admin/sales-team/parts';
@@ -13,20 +12,30 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { FilterBar, FilterSelect } from '@/components/ui/FilterBar';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useReadOnly } from '@/components/ui/ViewOnly';
-import type { OrgMember } from '@/lib/db/types';
-import { orgMemberRepository, type OrgNode } from '@/lib/repositories';
+import {
+  designationKeys,
+  designationsApi,
+  orgKeys,
+  orgMembersApi,
+  type ApiOrgMember,
+  type ApiOrgNode,
+} from '@/lib/api/sales-team';
+import { useApi } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 import { formatBdt } from '@/lib/utils/format';
 
-type Dialog = { kind: 'add'; parentId: string | null } | { kind: 'move'; member: OrgMember; to?: string | null } | null;
+type Dialog =
+  | { kind: 'add'; parentId: string | null }
+  | { kind: 'move'; member: ApiOrgMember; to?: string | null }
+  | null;
 
-function matches(n: OrgNode, q: string, designation: string): boolean {
+function matches(n: ApiOrgNode, q: string, designation: string): boolean {
   const byText = !q || `${n.member.name} ${n.member.code} ${n.member.phone ?? ''}`.toLowerCase().includes(q);
   return byText && (designation === 'all' || n.member.designation_id === designation);
 }
 
 /** A branch stays on screen while it, or anyone under it, matches the filter. */
-function keeps(n: OrgNode, q: string, designation: string): boolean {
+function keeps(n: ApiOrgNode, q: string, designation: string): boolean {
   return matches(n, q, designation) || n.children.some((c) => keeps(c, q, designation));
 }
 
@@ -37,25 +46,25 @@ function keeps(n: OrgNode, q: string, designation: string): boolean {
  * tree. Each card shows the team size and the sales of the whole branch.
  */
 export default function OrgChartPage() {
-  const tree = useLiveQuery(() => orgMemberRepository.tree(), []);
-  const designations = useLiveQuery(() => orgMemberRepository.designations(), []);
+  const tree = useApi(orgKeys.tree(), (signal) => orgMembersApi.tree(signal));
+  const designations = useApi(designationKeys.all, (signal) => designationsApi.list(signal));
   const readOnly = useReadOnly();
   const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
   const [q, setQ] = useState('');
   const [designation, setDesignation] = useState('all');
   const [showLeft, setShowLeft] = useState(false);
   const [dialog, setDialog] = useState<Dialog>(null);
-  const [dragging, setDragging] = useState<OrgMember | null>(null);
+  const [dragging, setDragging] = useState<ApiOrgMember | null>(null);
   const [over, setOver] = useState<string | null>(null);
 
   if (!tree) return <p className="text-sm text-ink-muted">Loading…</p>;
 
   const needle = q.trim().toLowerCase();
   const filtered = Boolean(needle || designation !== 'all');
-  const prune = (nodes: OrgNode[]): OrgNode[] => nodes.filter((n) => showLeft || n.member.status === 'active').filter((n) => keeps(n, needle, designation));
+  const prune = (nodes: ApiOrgNode[]): ApiOrgNode[] => nodes.filter((n) => showLeft || n.member.status === 'active').filter((n) => keeps(n, needle, designation));
   const roots = prune(tree);
-  const all: OrgNode[] = [];
-  const walk = (ns: OrgNode[]) => ns.forEach((n) => (all.push(n), walk(n.children)));
+  const all: ApiOrgNode[] = [];
+  const walk = (ns: ApiOrgNode[]) => ns.forEach((n) => (all.push(n), walk(n.children)));
   walk(tree);
   const active = all.filter((n) => n.member.status === 'active');
   const salesTotal = tree.reduce((t, n) => t + n.branch_sales, 0);
@@ -68,7 +77,7 @@ export default function OrgChartPage() {
       return next;
     });
 
-  const drop = (target: OrgNode | null) => {
+  const drop = (target: ApiOrgNode | null) => {
     setOver(null);
     if (!dragging || readOnly) return;
     if (target?.member.id === dragging.id) return;
@@ -76,7 +85,7 @@ export default function OrgChartPage() {
     setDragging(null);
   };
 
-  const renderNode = (n: OrgNode, depth: number) => {
+  const renderNode = (n: ApiOrgNode, depth: number) => {
     const kids = prune(n.children);
     const open = filtered || !collapsed.has(n.member.id);
     const dim = filtered && !matches(n, needle, designation);

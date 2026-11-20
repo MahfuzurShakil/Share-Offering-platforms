@@ -3,12 +3,10 @@
 import Link from 'next/link';
 import { Suspense, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { HandCoins, ReceiptText, Undo2, Wallet } from 'lucide-react';
-import { AccountPicker } from '@/components/admin/finance/AccountPicker';
 import { Kpi, Row } from '@/components/admin/share-sale/bits';
 import { ErrorNote, useAction } from '@/components/admin/share-sale/ShareSaleModals';
-import { LineStatusBadge, useCommissionSync } from '@/components/admin/sales-team/parts';
+import { LineStatusBadge } from '@/components/admin/sales-team/parts';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
 import { DataTable, type Column } from '@/components/ui/DataTable';
@@ -16,15 +14,19 @@ import { EmptyState } from '@/components/ui/EmptyState';
 import { Field, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
 import { PageHeader } from '@/components/ui/PageHeader';
-import { useSession } from '@/lib/auth/session';
+import {
+  payoutKeys,
+  payoutsApi,
+  type ApiCommissionPayout,
+  type ApiPayoutPreview,
+} from '@/lib/api/sales-team';
+import { useApi, useRefresh } from '@/lib/api/use-api';
 import { payoutMath } from '@/lib/domain/commission';
-import { commissionPayoutRepository, type PayoutPreview, type PayoutRow } from '@/lib/repositories';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
 /** Pays one member all their approved lines; paid commission on cancelled sales comes off first. */
-function PayModal({ preview, onClose }: { preview: PayoutPreview; onClose: () => void }) {
-  const { userId } = useSession();
-  const [account, setAccount] = useState('');
+function PayModal({ preview, onClose }: { preview: ApiPayoutPreview; onClose: () => void }) {
+  const refresh = useRefresh([payoutKeys.all]);
   const [date, setDate] = useState(todayLocal());
   const [tax, setTax] = useState('10');
   const [ref, setRef] = useState('');
@@ -43,14 +45,26 @@ function PayModal({ preview, onClose }: { preview: PayoutPreview; onClose: () =>
           <Button variant="outline" onClick={onClose}>
             Cancel
           </Button>
-          <Button disabled={busy} onClick={() => run(() => commissionPayoutRepository.pay({ member_id: preview.member.id, account_id: account, paid_on: date, tax_pct: Number(tax) || 0, reference_no: ref }, userId), onClose)}>
+          <Button
+            disabled={busy}
+            onClick={() =>
+              run(async () => {
+                await payoutsApi.pay({
+                  member_id: preview.member.id,
+                  paid_on: date,
+                  tax_pct: Number(tax) || 0,
+                  reference_no: ref.trim() || null,
+                });
+                await refresh();
+              }, onClose)
+            }
+          >
             {busy ? 'Paying…' : `Pay ${formatBdt(math.net)}`}
           </Button>
         </>
       }
     >
       <div className="grid gap-4 md:grid-cols-2">
-        <AccountPicker value={account} onChange={setAccount} label="Paid from" required />
         <Field label="Paid on" required>
           <TextInput type="date" value={date} onChange={(e) => setDate(e.target.value)} />
         </Field>
@@ -69,6 +83,11 @@ function PayModal({ preview, onClose }: { preview: PayoutPreview; onClose: () =>
           <span className="text-base font-semibold">{formatBdt(math.net)}</span>
         </Row>
       </div>
+      {/*
+        No "paid from" account yet: bank and cash accounts arrive with the Fund
+        & Partners module, and the payout's `account_id` is waiting for them.
+        The reference is what ties it to the bank statement until then.
+      */}
       {preview.to_recover > math.recovered && (
         <p className="mt-3 text-xs text-amber-700">{formatBdt(preview.to_recover - math.recovered)} more to recover is carried to the next payout.</p>
       )}
@@ -77,16 +96,25 @@ function PayModal({ preview, onClose }: { preview: PayoutPreview; onClose: () =>
   );
 }
 
-function PayoutDetail({ payout, onClose }: { payout: PayoutRow; onClose: () => void }) {
-  const detail = useLiveQuery(() => commissionPayoutRepository.detail(payout.id), [payout.id]);
+function PayoutDetail({ payout, onClose }: { payout: ApiCommissionPayout; onClose: () => void }) {
+  const detail = useApi(payoutKeys.one(payout.id), (signal) =>
+    payoutsApi.detail(payout.id, signal),
+  );
   return (
-    <Modal open size="lg" title={`Payout ${payout.code}`} subtitle={`${payout.member?.name ?? '—'} · ${formatDate(payout.paid_on)} · ${formatBdt(payout.net)}`} icon={ReceiptText} onClose={onClose}>
+    <Modal
+      open
+      size="lg"
+      title={`Payout ${payout.code}`}
+      subtitle={`${payout.member_name} · ${formatDate(payout.paid_on)} · ${formatBdt(payout.net)}`}
+      icon={ReceiptText}
+      onClose={onClose}
+    >
       <div className="rounded-xl border border-hairline bg-white px-4 py-2">
         <Row label="Approved commission">{formatBdt(payout.lines_total)}</Row>
         {payout.recovered > 0 && <Row label="Recovered">− {formatBdt(payout.recovered)}</Row>}
         <Row label={`Tax withheld ${payout.tax_pct}%`}>− {formatBdt(payout.tax_withheld)}</Row>
         <Row label="Paid out">{formatBdt(payout.net)}</Row>
-        <Row label="From">{[payout.account_name, payout.reference_no].filter(Boolean).join(' · ') || '—'}</Row>
+        <Row label="Reference">{payout.reference_no || '—'}</Row>
       </div>
       {detail && (
         <div className="mt-4 overflow-x-auto rounded-xl border border-hairline bg-white">
@@ -106,7 +134,7 @@ function PayoutDetail({ payout, onClose }: { payout: PayoutRow; onClose: () => v
                   <tr key={l.id} className="border-b border-hairline/60 last:border-0">
                     <td className="px-4 py-2">
                       {l.sale_code}
-                      <span className="block text-xs text-ink-muted">{l.customer?.name}</span>
+                      <span className="block text-xs text-ink-muted">{l.customer_name}</span>
                     </td>
                     <td className="px-4 py-2">{l.stage_label}</td>
                     <td className="px-4 py-2">{back ? <span className="text-xs font-medium text-red-600">Taken back</span> : <LineStatusBadge status={l.status} toRecover={l.to_recover} />}</td>
@@ -125,11 +153,10 @@ function PayoutDetail({ payout, onClose }: { payout: PayoutRow; onClose: () => v
 /** Sales Team → Payouts (plan §7.2 step 4): who has approved commission waiting, and what was paid. */
 function PayoutsPage() {
   const params = useSearchParams();
-  const synced = useCommissionSync();
-  const payable = useLiveQuery(() => commissionPayoutRepository.payable(), [synced]);
-  const payouts = useLiveQuery(() => commissionPayoutRepository.list(), []);
-  const [paying, setPaying] = useState<PayoutPreview | null>(null);
-  const [open, setOpen] = useState<PayoutRow | null>(null);
+  const payable = useApi(payoutKeys.payable(), (signal) => payoutsApi.payable(signal));
+  const payouts = useApi(payoutKeys.list(), (signal) => payoutsApi.list({}, signal));
+  const [paying, setPaying] = useState<ApiPayoutPreview | null>(null);
+  const [open, setOpen] = useState<ApiCommissionPayout | null>(null);
   // "Pay" on a member's page opens straight on that member, once
   const wanted = params.get('member');
   const [linkUsed, setLinkUsed] = useState(false);
@@ -140,7 +167,7 @@ function PayoutsPage() {
   const year = todayLocal().slice(0, 4);
   const thisYear = payouts.filter((p) => p.paid_on.startsWith(year));
 
-  const columns: Column<PayoutRow>[] = [
+  const columns: Column<ApiCommissionPayout>[] = [
     {
       key: 'date',
       header: 'Date',
@@ -157,15 +184,19 @@ function PayoutsPage() {
       header: 'Member',
       cell: (r) => (
         <span className="block">
-          <span className="block font-medium text-ink">{r.member?.name ?? '—'}</span>
+          <span className="block font-medium text-ink">{r.member_name}</span>
           <span className="block text-xs text-ink-muted">
-            {r.member?.code} · {r.line_count} line{r.line_count === 1 ? '' : 's'}
+            {r.member_code} · {r.line_count} line{r.line_count === 1 ? '' : 's'}
           </span>
         </span>
       ),
-      sortValue: (r) => r.member?.name ?? '',
+      sortValue: (r) => r.member_name,
     },
-    { key: 'account', header: 'From', cell: (r) => <span className="text-sm">{[r.account_name, r.reference_no].filter(Boolean).join(' · ') || '—'}</span> },
+    {
+      key: 'reference',
+      header: 'Reference',
+      cell: (r) => <span className="text-sm">{r.reference_no || '—'}</span>,
+    },
     { key: 'gross', header: 'Commission', align: 'right', cell: (r) => <span className="tabular-nums">{formatBdt(r.lines_total)}</span>, sortValue: (r) => r.lines_total },
     { key: 'recovered', header: 'Recovered', align: 'right', cell: (r) => <span className={`tabular-nums ${r.recovered ? 'text-red-600' : 'text-ink-muted'}`}>{r.recovered ? `− ${formatBdt(r.recovered)}` : '—'}</span>, sortValue: (r) => r.recovered },
     { key: 'tax', header: 'Tax', align: 'right', cell: (r) => <span className="tabular-nums">{formatBdt(r.tax_withheld)}</span>, sortValue: (r) => r.tax_withheld },
@@ -174,7 +205,10 @@ function PayoutsPage() {
 
   return (
     <>
-      <PageHeader title="Commission Payouts" subtitle="Pay each member their approved commission at once — monthly is typical. Payouts leave a bank or cash account and show in Cash Position." />
+      <PageHeader
+        title="Commission Payouts"
+        subtitle="Pay each member their approved commission at once — monthly is typical. A payout is written once and corrected by another, never edited."
+      />
       <div className="mb-5 grid gap-3 sm:grid-cols-3">
         <Kpi label="Approved, waiting" value={formatBdt(waiting)} hint={`${payable.length} member${payable.length === 1 ? '' : 's'}`} icon={HandCoins} />
         <Kpi label={`Paid out in ${year}`} value={formatBdt(thisYear.reduce((t, p) => t + p.net, 0))} hint={`${thisYear.length} payout${thisYear.length === 1 ? '' : 's'}`} icon={Wallet} />
@@ -228,7 +262,7 @@ function PayoutsPage() {
           mobileCard={(r) => (
             <div className="flex items-start justify-between gap-2">
               <span>
-                <span className="block font-medium text-ink">{r.member?.name}</span>
+                <span className="block font-medium text-ink">{r.member_name}</span>
                 <span className="block text-xs text-ink-muted">
                   {r.code} · {formatDate(r.paid_on)}
                 </span>

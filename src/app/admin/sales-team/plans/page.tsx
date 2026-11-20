@@ -1,10 +1,8 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { FileCog, Pencil, Plus, Trash2 } from 'lucide-react';
 import { PlanFormModal } from '@/components/admin/sales-team/PlanFormModal';
-import { useCommissionSync } from '@/components/admin/sales-team/parts';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -12,27 +10,32 @@ import { ConfirmDialog } from '@/components/ui/ConfirmDialog';
 import { EmptyState } from '@/components/ui/EmptyState';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { ResultDialog } from '@/components/ui/ResultDialog';
-import type { CommissionBasis, CommissionPlan } from '@/lib/db/types';
+import {
+  commissionPlansApi,
+  designationKeys,
+  designationsApi,
+  planKeys,
+  type ApiCommissionPlan,
+} from '@/lib/api/sales-team';
+import { messageOf } from '@/lib/api/client';
+import { useApi, useRefresh } from '@/lib/api/use-api';
+import type { CommissionBasis } from '@/lib/db/types';
 import { COMMISSION_PLAN_STATUS_META, COMMISSION_TRIGGER_LABEL } from '@/lib/domain/commission';
-import { commissionPlanRepository, orgMemberRepository, projectRepository, shareOfferingRepository } from '@/lib/repositories';
 import { formatBdt, formatDate } from '@/lib/utils/format';
 
 const rate = (basis: CommissionBasis, value: number) => (basis === 'pct' ? `${value}%` : basis === 'per_share' ? `${formatBdt(value)} / share` : `${formatBdt(value)} / sale`);
 
 /** Sales Team → Commission Plans (REVENUE-SHARE-PLAN.md §7.1). */
 export default function PlansPage() {
-  const synced = useCommissionSync();
-  const plans = useLiveQuery(() => commissionPlanRepository.list(), [synced]);
-  const projects = useLiveQuery(() => projectRepository.getAll(), []);
-  const offerings = useLiveQuery(() => shareOfferingRepository.getAll(), []);
-  const designations = useLiveQuery(() => orgMemberRepository.designations(), []);
-  const [editing, setEditing] = useState<(CommissionPlan & { sales: number }) | 'new' | null>(null);
-  const [removing, setRemoving] = useState<CommissionPlan | null>(null);
+  const refresh = useRefresh([planKeys.all]);
+  const plans = useApi(planKeys.list(), (signal) => commissionPlansApi.list(signal));
+  const designations = useApi(designationKeys.all, (signal) => designationsApi.list(signal));
+  const [editing, setEditing] = useState<ApiCommissionPlan | 'new' | null>(null);
+  const [removing, setRemoving] = useState<ApiCommissionPlan | null>(null);
   const [notice, setNotice] = useState('');
 
   if (!plans) return <p className="text-sm text-ink-muted">Loading…</p>;
-  const projectName = (id?: string | null) => (id ? (projects?.find((p) => p.id === id)?.name ?? '—') : 'All projects');
-  const offering = (id?: string | null) => offerings?.find((o) => o.id === id);
+  // the project and the round arrive named on the row, so nothing is looked up
   const designation = (id: string) => designations?.find((d) => d.id === id)?.value ?? '—';
 
   return (
@@ -53,7 +56,6 @@ export default function PlansPage() {
       ) : (
         <div className="grid gap-4 xl:grid-cols-2">
           {plans.map((p) => {
-            const o = offering(p.offering_id);
             return (
               <Card key={p.id}>
                 <div className="mb-3 flex flex-wrap items-start justify-between gap-2">
@@ -63,8 +65,9 @@ export default function PlansPage() {
                       <Badge tone={COMMISSION_PLAN_STATUS_META[p.status].tone}>{COMMISSION_PLAN_STATUS_META[p.status].label}</Badge>
                     </p>
                     <p className="text-xs text-ink-muted">
-                      {p.code} · {p.applies_to === 'share_sale' ? 'Share sales' : 'Bookings'} · {projectName(p.project_id)}
-                      {o ? ` · ${o.code} Round ${o.round_no}` : ''}
+                      {p.code} · {p.applies_to === 'share_sale' ? 'Share sales' : 'Bookings'} ·{' '}
+                      {p.project_name ?? 'All projects'}
+                      {p.offering_code ? ` · ${p.offering_code}` : ''}
                     </p>
                     <p className="text-xs text-ink-muted">
                       From {formatDate(p.effective_from)}
@@ -122,9 +125,10 @@ export default function PlansPage() {
           message="No sale uses this plan yet, so it can be deleted."
           onConfirm={async () => {
             try {
-              await commissionPlanRepository.remove(removing.id);
+              await commissionPlansApi.remove(removing.id);
+              await refresh();
             } catch (e) {
-              setNotice(e instanceof Error ? e.message : 'Could not delete.');
+              setNotice(messageOf(e));
             }
             setRemoving(null);
           }}
