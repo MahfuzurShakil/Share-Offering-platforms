@@ -8,6 +8,11 @@ import { POST as completeStage } from '@/app/api/v1/leads/[id]/stage/route';
 import { GET as getLead } from '@/app/api/v1/leads/[id]/route';
 import { GET as getLeadQueue } from '@/app/api/v1/leads/queue/route';
 import { POST as captureLead } from '@/app/api/v1/leads/route';
+import { GET as listCommissions } from '@/app/api/v1/commissions/route';
+import { POST as approveCommission } from '@/app/api/v1/commissions/approve/route';
+import { POST as payCommission } from '@/app/api/v1/commission-payouts/route';
+import { POST as createPlan } from '@/app/api/v1/commission-plans/route';
+import { POST as createMember } from '@/app/api/v1/org-members/route';
 import { GET as getLeadSummary } from '@/app/api/v1/leads/summary/route';
 import { PATCH as moveWithdrawal } from '@/app/api/v1/profit-withdrawals/[id]/route';
 import { GET as listWithdrawals, POST as requestWithdrawal } from '@/app/api/v1/profit-withdrawals/route';
@@ -91,6 +96,9 @@ suite('the whole flow', () => {
     leadId?: string;
     customerId?: string;
     saleId?: string;
+    sellerId?: string;
+    sellerDesignationId?: string;
+    leadDesignationId?: string;
     periodId?: string;
     withdrawalId?: string;
   } = {};
@@ -145,6 +153,19 @@ suite('the whole flow', () => {
         role_code: 'super_admin',
       },
     });
+
+    /*
+     * The designations the client edits in Master Data. Seeded here because
+     * `prisma/seed/01-lookups.ts` puts them in a real database and this suite
+     * starts from empty.
+     */
+    for (const [index, value] of ['Team Lead', 'Sales Executive'].entries()) {
+      const row = await db.lookupValue.create({
+        data: { category: 'org_designation', value, sort_order: index + 1, is_system: true },
+      });
+      if (value === 'Sales Executive') story.sellerDesignationId = row.id;
+      else story.leadDesignationId = row.id;
+    }
 
     const response = await login(
       req('POST', '/api/v1/auth/login', {
@@ -348,6 +369,89 @@ suite('the whole flow', () => {
    * 4. The purchase, from the hold to the last receipt
    * -------------------------------------------------------------- */
 
+  /* -------------------------------------------------------------- *
+   * 3b. Somebody to sell it, and what they earn
+   * -------------------------------------------------------------- */
+
+  it('3b. puts a seller under a lead and sets what the sale will earn', async () => {
+    const lead = await call<{ id: string; code: string }>(
+      createMember,
+      'POST',
+      '/api/v1/org-members',
+      {
+        body: {
+          name: 'Rina Chowdhury',
+          designation_id: story.leadDesignationId,
+          joined_on: `${YEAR - 1}-01-01`,
+        },
+      },
+    );
+    expect(lead.code).toBe('ORG-001');
+
+    const seller = await call<{ id: string; code: string }>(
+      createMember,
+      'POST',
+      '/api/v1/org-members',
+      {
+        body: {
+          name: 'Arif Islam',
+          designation_id: story.sellerDesignationId,
+          parent_id: lead.id,
+          joined_on: `${YEAR - 1}-02-01`,
+        },
+      },
+    );
+    story.sellerId = seller.id;
+
+    /*
+     * The plan's own worked example (§7.1): 10% to the seller, 1% to the Team
+     * Lead above them, released 20 / 30 / 50 as the money arrives.
+     */
+    const plan = await call<{ code: string; status: string }>(
+      createPlan,
+      'POST',
+      '/api/v1/commission-plans',
+      {
+        body: {
+          name: 'Share sales — standard',
+          applies_to: 'share_sale',
+          seller_basis: 'pct',
+          seller_value: 10,
+          stages: [
+            {
+              key: 'signed',
+              label: 'Agreement + down payment',
+              trigger: 'agreement_down_payment',
+              release_type: 'pct',
+              release_value: 20,
+            },
+            {
+              key: 'half',
+              label: '50% paid',
+              trigger: 'paid_pct',
+              threshold_pct: 50,
+              release_type: 'pct',
+              release_value: 30,
+            },
+            {
+              key: 'full',
+              label: 'Fully paid',
+              trigger: 'fully_paid',
+              release_type: 'pct',
+              release_value: 50,
+            },
+          ],
+          overrides: [{ designation_id: story.leadDesignationId, basis: 'pct', value: 1 }],
+          cancel_rule: 'recover',
+          effective_from: `${YEAR - 1}-01-01`,
+          status: 'active',
+        },
+      },
+    );
+    expect(plan.code).toBe('CMP-001');
+    expect(plan.status).toBe('active');
+  });
+
   it('4. reserves 20 shares, signs the schedule, and pays it off', async () => {
     const reserved = await call<{
       id: string;
@@ -363,6 +467,7 @@ suite('the whole flow', () => {
         down_payment_pct: 20,
         installment_count: 4,
         reserved_on: `${YEAR - 1}-09-28`,
+        sold_by_member_id: story.sellerId,
       },
     });
 
@@ -469,6 +574,70 @@ suite('the whole flow', () => {
   /* -------------------------------------------------------------- *
    * 5. What the project earned, and whose it is
    * -------------------------------------------------------------- */
+
+  it('4b. earns the seller and their lead every stage, and pays it out', async () => {
+    const { rows, totals } = await call<{
+      rows: Array<{
+        member_name: string;
+        role: string;
+        stage_key: string;
+        amount: number;
+        status: string;
+        designation_at_sale: string;
+      }>;
+      totals: { earned: number; pending: number };
+    }>(listCommissions, 'GET', '/api/v1/commissions');
+
+    /*
+     * The purchase is paid off, so all three stages are earned already —
+     * nobody marked them. 10% of 2 crore is 20 lakh to the seller, and the
+     * Team Lead's 1% override is 2 lakh.
+     */
+    expect(rows).toHaveLength(6);
+    expect(totals.pending).toBe(0);
+    expect(totals.earned).toBe(22 * LAKH);
+
+    const seller = rows.filter((row) => row.role === 'seller');
+    expect(seller.reduce((sum, row) => sum + row.amount, 0)).toBe(20 * LAKH);
+    expect(seller.find((row) => row.stage_key === 'signed')?.amount).toBe(4 * LAKH);
+    expect(seller.find((row) => row.stage_key === 'full')?.amount).toBe(10 * LAKH);
+    // the designation is the word it was on the sale date, not a live lookup
+    expect(seller[0]?.designation_at_sale).toBe('Sales Executive');
+
+    const override = rows.filter((row) => row.role === 'override');
+    expect(override.reduce((sum, row) => sum + row.amount, 0)).toBe(2 * LAKH);
+    expect(override[0]?.member_name).toBe('Rina Chowdhury');
+
+    const earned = await db.commissionLine.findMany({
+      where: { member_id: story.sellerId, status: 'earned' },
+      select: { id: true },
+    });
+    const approved = await call<{ approved: number }>(
+      approveCommission,
+      'POST',
+      '/api/v1/commissions/approve',
+      { body: { ids: earned.map((line: { id: string }) => line.id) } },
+    );
+    expect(approved.approved).toBe(3);
+
+    const payout = await call<{
+      code: string;
+      lines_total: number;
+      tax_withheld: number;
+      net: number;
+    }>(payCommission, 'POST', '/api/v1/commission-payouts', {
+      body: {
+        member_id: story.sellerId,
+        paid_on: `${YEAR - 1}-10-31`,
+        tax_pct: 10,
+        reference_no: 'CHQ/0221',
+      },
+    });
+    expect(payout.code).toBe(`CPO-${YEAR - 1}-001`);
+    expect(payout.lines_total).toBe(20 * LAKH);
+    expect(payout.tax_withheld).toBe(2 * LAKH);
+    expect(payout.net).toBe(18 * LAKH);
+  });
 
   it('5. records the quarter’s income and cost, then closes the period', async () => {
     await call(setPolicy, 'PUT', `/api/v1/projects/${story.projectId}/revenue`, {
@@ -717,6 +886,10 @@ suite('the whole flow', () => {
       'revenue_periods',
       'profit_allocations',
       'profit_withdrawals',
+      'org_members',
+      'commission_plans',
+      'commission_lines',
+      'commission_payouts',
     ]) {
       expect(tables, `no audit row for ${table}`).toContain(table);
     }
