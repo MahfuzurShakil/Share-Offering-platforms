@@ -1,68 +1,64 @@
 # Next session — where to pick up
 
-Written 18 Nov 2026, last revised after the Projects batch and its browser
-check. Working tree clean, pushed to `origin`
-(github.com/MahfuzurShakil/Share-Offering-platforms); `prototype` stays as the
-local remote Phase 2 reads Land and Construction back out of.
+Written 20 Nov 2026, at commit `a38f9a2`. Working tree clean, pushed to
+`origin` (github.com/MahfuzurShakil/Share-Offering-platforms). `prototype` is
+the other remote: it is where Phase 2 reads Land and Construction back out of,
+never somewhere to push.
 
 ## What is done
 
+The product's own story now runs end to end on Postgres — a project is valued,
+a round of its shares goes to the market, an investor buys into it, pays, and
+takes a share of the profit.
+
 | | |
 |---|---|
-| **The fork** | `RealEstateSolution3` copied with its history, pruned to the share-sale product (`48acd42`). Land, construction, procurement and flat sale are in the history before that commit and return in Phase 2. |
-| **Docs** | `PHASE-1-PLAN.md` is the plan of record. `AGENTS.md` states this product's architecture. 16 prototype-era plans moved to `docs/prototype/`. |
-| **Database** | PostgreSQL 18 locally. 13 Prisma models (reference data, roles and permissions, users, sessions, OTP, auth attempts, audit log, code series, documents, projects), one migration applied, reference data seeded (7 roles, 70 permissions, 82 option values). |
-| **Foundation rules** | Transactional display codes (`PRJ-2026-001`), an audit row for every write, append-only audit log enforced by a trigger, soft delete on records people manage, money in `Decimal`. |
-| **Auth** | argon2id passwords, mobile OTP, opaque sessions (cookie for the browser, Bearer for the apps), Postgres rate limiting, server-enforced RBAC from `role_permissions` rows. Six `/api/v1/auth/*` routes. |
-| **Browser** | Typed API client, TanStack Query, `useApi` (same shape as `useLiveQuery`), a real `useSession()`, `/login`, and a sign-in gate. The role-simulator dropdown is gone. |
-| **First user** | `scripts/create-admin.ts` (`npm run create-admin`): prompts for name / mobile / password, holds it to the app's own policy, hashes with argon2id, creates a `super_admin`, writes its own audit row, and refuses to run when the users table is not empty unless `--force` is passed. `--yes` with `ADMIN_*` in the environment for a container's first boot. |
-| **Projects** | End to end on Postgres: `server/services/project.service.ts` → `/api/v1/projects` (list, create, read, update, delete) + `/api/v1/projects/[id]/sales-status` → `lib/api/projects.ts` → the four admin project screens on `useApi`. Filtering, search, sorting and paging are SQL; name uniqueness, the date order, the sales moves and "publish before featuring" are server rules; Decimal and Date cross the wire as `number` and `YYYY-MM-DD`. Plus `/api/v1/users/assignable` so the manager picker has names. |
-| **Checks** | 149 tests in 13 files, lint and types clean, production build of 63 pages. |
+| **Foundation** | PostgreSQL 18, 24 Prisma models, 6 migrations. Transactional display codes, an audit row for every write, an append-only audit log, soft delete where it belongs, money in `Decimal`. |
+| **Auth** | argon2id passwords, mobile OTP, opaque sessions, Postgres rate limiting, server-enforced RBAC from `role_permissions`. `npm run create-admin` makes the first user. |
+| **Projects** | Master record, and a **Valuation** tab: what 100% is worth, into how many shares it is cut, the day it was valued. Locked once a round has been on the market. |
+| **Share offerings** | A round offers some of the project's shares and may add its own premium. The project cannot be sold twice over; a closed round hands its unsold shares back. Draft → open → closed / cancelled, with extend. |
+| **Customers** | One investor, one file, across every project. The phone number is the identity, normalised in `domain/phone.ts` and unique in the database. KYC, nominee and bank, all optional until the signing needs them. |
+| **Purchases** | Hold → sign (the schedule is written) → pay → paid off. Late fees first, oldest row first, as of the day the money arrived. A receipt is corrected by its opposite; the database refuses to edit or delete one. |
+| **Profit sharing** | Income and cost, periods closed / approved / declared, every holder's share frozen on a record date. A loss is carried forward. What a holder cannot take goes to the owners; the lines always add up to what was declared. |
+| **Withdrawals** | Balances (never stored — always `credited − paid − pending`), request → approve → pay, or refuse. "Adjust against overdue dues first" pays the holder's own installments out of their profit, as a `profit_adjustment` receipt. |
+| **Checks** | 275 tests in 20 files, lint and types clean, production build of 68 pages. |
+
+8 services, 30 API routes, and the screens for all of the above read them
+through `src/lib/api/*`.
 
 ## Start here
 
-1. **Projects passed its browser check** (18 Nov 2026): signed in, created
-   `PRJ-2026-002`, the code came from the series, the manager's name came back
-   from the join, the area crossed as a number and the search ran in Postgres.
-   Nothing is outstanding on it.
-2. **The next schema slice**: customers, share offerings, share sales,
-   installments, payments — then the same path for Share Sale (S2).
-3. **What the Projects move cost, as measured**: the service, routes and typed
-   client were new code; the four screens were close to mechanical — hooks and
-   field names, not logic. The three things that were not a codemod, and will
-   not be in any module: validation moving from the form to zod + the service,
-   a client-side cross-row check (unique name) becoming a server rule, and
-   joins the browser used to do by hand becoming a `select` (the manager's
-   name). Budget those three per module.
-4. **Still Dexie, and now showing no projects** because projects live in
-   Postgres: the project pickers on leads, fund, sales-team plans, website,
-   share-sale offerings and the user form. They come right as their own
-   modules move — but a demo of those screens before then will look empty.
-   `scripts/demo/01-projects.ts` (through the REST API) is still to write.
+1. **Nobody has walked the whole flow in a browser yet.** The services are
+   covered by tests against the real database, but the screens have only been
+   checked as far as creating a project and an offering. Worth one pass:
+   create-admin → project → valuation → offering → open → customer → reserve →
+   sign → payment → income → close → approve → declare → withdrawal.
+2. **Leads / CRM** (`crm` module) — the start of the story, and the last part
+   of the customer's journey still on the interim layer. `leads`,
+   `lead_activities`, converting a lead into a customer.
+3. **Sales Team & commission** (REVENUE-SHARE-PLAN.md Parts E–F) — org chart,
+   commission plans, what a purchase earns whoever sold it, payouts.
+4. **Money** (`finance_expense`) — fund receipts, partners, loans, cash
+   position. This is also what the owners' single line in a profit declaration
+   is waiting for: once partners exist, that line becomes one per partner and
+   nothing else changes.
+5. **S4 and after**: the general ledger and auto-posting, the Users & Roles
+   screen (still the prototype's static matrix), file storage, the PDF engine,
+   the audit-log viewer, the payment-gateway webhook, background jobs,
+   `scripts/demo/*` through the REST API, staging and Docker.
 
-## Decisions waiting for S2
+## Still on the interim Dexie layer
 
-Two things the Projects browser pass (18 Nov 2026) raised. Neither is a bug and
-neither is decided yet — they are written here, not in `OPEN-ITEMS.md`, because
-that file is the prototype's history and these are Phase 1's own questions.
+37 files under `src/app/admin` and `src/components/admin` still call
+`useLiveQuery`. The whole of Leads, Sales Team, Money, Website/Blog, Master
+Data, Company Settings, Users & Roles, the Dashboard, Customer Requests, the
+profit period's own page, and these pieces of screens that are otherwise
+moved: `DocumentsPanel`, `ProjectGalleryPanel`, `ProjectSalesCard`'s website
+checklist, `AccountPicker`. The Customer Portal and the public site are
+entirely Dexie.
 
-1. **The project form asks for very little.** Deliberate at the time — the
-   prototype's tower, architect, floor and construction fields went with the
-   modules that own them — but what a *share* project should carry has never
-   been worked out: what an investor actually wants to see before they buy,
-   and what the public listing needs to be convincing. The client wants a
-   market look at comparable platforms before fields are chosen. Do it after
-   S2, not before: the offering and holding screens will show what is already
-   said elsewhere, so the list of missing fields gets shorter, and adding
-   several columns in one migration is cheaper than three rounds of one.
-2. **`expected_start_date` / `expected_completion_date` on the project are
-   probably the wrong home.** The real selling window belongs to the share
-   offering — when the round opens and closes, the price, how much is left —
-   and once offerings exist, these two dates are at best a planning hint.
-   Decide when S2's offering screens are up: if nobody reads them, take the
-   two fields off the form (the columns stay, so no migration is needed) and
-   let the project show the window of its live offering instead. Do not remove
-   them before then, or the same migration gets written twice.
+They show empty rather than wrong: their tables are in Postgres or not at all,
+and the Dexie copy has nothing in it.
 
 ## How we divide the work
 
@@ -70,55 +66,62 @@ The user runs the browser steps themselves and reports back in a sentence —
 "it saved but the list is empty" replaces five to eight browser tool calls. So:
 
 - finish a batch, make `npm test`, `npm run lint`, `npx tsc --noEmit` and the
-  build green, commit, then hand the user the exact steps to try and ask what
-  they saw. A screenshot or pasted console text is enough; do not go and look
-  unless they ask or it is a visual judgement nothing else can settle.
-- put the weight of verification in tests against the real database. Today's
-  125 cover audit rows, rate limiting, OTP, sessions and the login API without
-  a browser at all.
-- grow `scripts/demo/*` — it creates data through the real REST API — rather
-  than clicking the same flow by hand.
+  build green, commit, push, then hand the user the exact steps to try.
+- put the weight of verification in tests against the real database.
 - **start a fresh session per batch.** A long session re-reads its whole
-  history on every message, which costs more than any amount of testing. This
-  file exists so a new session needs none of that history.
+  history on every message; this file exists so a new one needs none of it.
 
 ## How to run and check
 
 ```bash
-npm run build && npm run start -- -p 3002     # the built app
+npm run dev                                   # port 3000
 npm test && npm run lint && npx tsc --noEmit  # all three must be clean
-npm run db:migrate                            # after a schema change
-npm run db:seed                               # idempotent reference data
+npm run build                                 # before every commit
 npm run create-admin                          # the first super_admin
+npm run db:seed                               # idempotent reference data
 ```
 
-Next 16 allows one `next dev` per machine and the prototype in
-`../RealEstateSolution3` usually holds it, so the built app on **port 3002** is
-the way to look at this one. `.claude/launch.json`'s first entry does that.
+Restart `next dev` after any schema change: the running server holds the old
+Prisma client and will say a new column does not exist.
 
 ## Things to know
 
-- **Nothing goes on a public or staging host yet.** The admin portal has auth,
-  but the data layer is half-moved: most screens still read the interim Dexie
-  scaffolding in the browser.
-- The project list no longer shows "% of the project sold" and "raised": those
-  were computed in the browser from the share tables, and come back as fields
-  on the list once share sale is in Postgres. The sales card's website
-  checklist is empty for the same reason.
-- `src/lib/db/database.ts` is scaffolding, not the data layer. Schema changes
-  go to `prisma/schema.prisma`. It gets no new tables.
-- Local database credentials are in `.env` (gitignored). The app connects as
-  `sharesale_app`, never as the Postgres superuser. `.env.example` is the
-  template.
-- Tests point at `sharesale_test` through `DATABASE_URL_TEST`; `src/test/db.ts`
-  applies migrations and truncates between cases. Database tests run in one
-  fork — do not parallelise them.
-- Two foundation bugs the tests caught are worth remembering: Prisma's promises
-  are lazy, so `AsyncLocalStorage` scopes must `await` inside themselves; and a
-  code series is gapless because a failed save rolls its number back.
-- Deliberately deferred, written down so they are not forgotten: the Users &
-  Roles screen still renders the prototype's static matrix and needs rewriting
-  against `role_permissions` (S4); `UserRole` in `src/lib/db/types.ts` still
-  lists `land_team`, `site_manager` and `procurement`; the general ledger,
-  audit-log viewer, PDF engine, payment-gateway webhook, file storage and
-  background jobs are all still to come (S4, per the plan).
+- **A migration cannot be made with `prisma migrate dev`**: the app's database
+  role cannot create the shadow database, and should not be able to. Use
+  `npx prisma migrate diff --from-schema-datasource prisma/schema.prisma
+  --to-schema-datamodel prisma/schema.prisma --script` into a new folder under
+  `prisma/migrations/`, then `npx prisma migrate deploy`. Load `.env` first
+  (`set -a && . ./.env && set +a`).
+- **The money maths is not in the services.** `src/lib/domain/share-sale.ts`
+  and `revenue-share.ts` build the schedule, say what is owed and how late,
+  split a declared amount, and the browser runs the same code to preview it.
+  A service decides *when* those sums may be done and what they are frozen
+  into. Keep it that way.
+- `Decimal` and `Date` are converted at the service boundary, once: money and
+  percentages as `number`, dates as `YYYY-MM-DD`, timestamps as ISO strings.
+- A payment row without allocation rows pays nothing — the schedule is read
+  through the allocations. That is the design; a test fixture that forgets it
+  looks like a bug in the ledger.
+- Permissions follow desks, not modules: signing an agreement is
+  `share_sale: approve`, receipting money is `finance_collection`, paying it
+  out is `finance_expense`.
+- Local database credentials are in `.env` (gitignored); the app connects as
+  `sharesale_app`. Tests use `sharesale_test` through `DATABASE_URL_TEST`, in
+  one fork — do not parallelise them.
+- Deliberately deferred, written down so they are not forgotten: the owners'
+  side of a declaration is one line until partners move; the signing wizard is
+  a single dialog until documents move; the Purchases and Ownership tabs on a
+  round, and the per-purchase paper checklist, come back with documents too.
+
+## Decisions waiting
+
+1. **What a project should ask for.** The form now takes a description, what
+   kind of thing is sold, where the money comes from, the expected holding
+   period and what happens to the land after the shares sell. Still open after
+   a market look: district as its own lookup (worth it when the public site can
+   filter on it), size in units or floors (Phase 2), and whether a target
+   return is ever typed rather than computed — it should not be.
+2. **`expected_start_date` / `expected_completion_date` on the project.** The
+   selling window belongs to the round, and these two are no longer on the
+   form. The columns stay; decide whether anything still reads them once the
+   public site moves.
