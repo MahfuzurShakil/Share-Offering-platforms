@@ -24,6 +24,8 @@ export const SOFT_DELETE_MODELS = new Set([
   'RevenueEntry',
   'RevenuePeriod',
   'ProfitWithdrawal',
+  'OrgMember',
+  'CommissionPlan',
   /*
    * Not here, and never: ShareInstallment, SharePayment and
    * SharePaymentAllocation. A payment is corrected by a reversing payment, and
@@ -33,6 +35,11 @@ export const SOFT_DELETE_MODELS = new Set([
    * ProfitAllocation is not here either: a holder's share of a declared
    * period is frozen when it is written, and a mistake is corrected by an
    * adjustment in the next period (REVENUE-SHARE-PLAN.md section 2.3).
+   *
+   * Nor OrgMove, CommissionLine or CommissionPayout. A move is the history a
+   * past commission is read through, so hiding one would silently re-write what
+   * an old sale earned. A line is voided rather than deleted, with the reason
+   * on it. A payout is money that left, and the database refuses to change one.
    */
 ]);
 

@@ -261,15 +261,29 @@ export interface SaleProgress {
   handover_on: string | null;
 }
 
-/** The first day cumulative principal reached `target`, or null. */
+/**
+ * The day cumulative principal reached `target` and stayed there, or null.
+ *
+ * Not simply the first crossing: a receipt is corrected by a reversing receipt,
+ * which is a **negative** row in the same ledger (AGENTS.md). So a stage that a
+ * since-reversed payment had pushed past has to come back — otherwise the
+ * company pays commission on money it gave back. The date is the one from which
+ * the running total last stayed at or above the target, so money that arrives,
+ * is reversed and arrives again earns on the day it actually stuck.
+ */
 export function paidReachedOn(payments: SaleProgress['payments'], target: number): string | null {
-  if (target <= 0) return payments.length ? [...payments].sort((a, b) => a.date.localeCompare(b.date))[0].date : null;
+  const inOrder = [...payments].sort((a, b) => a.date.localeCompare(b.date));
+  if (target <= 0) return inOrder.length ? inOrder[0].date : null;
   let sum = 0;
-  for (const p of [...payments].sort((a, b) => a.date.localeCompare(b.date))) {
+  let since: string | null = null;
+  for (const p of inOrder) {
+    const was = sum >= target - 0.5;
     sum += p.amount;
-    if (sum >= target - 0.5) return p.date;
+    const now = sum >= target - 0.5;
+    if (now && !was) since = p.date;
+    else if (!now) since = null;
   }
-  return null;
+  return since;
 }
 
 const later = (a: string | null, b: string | null) => (a && b ? (a > b ? a : b) : null);

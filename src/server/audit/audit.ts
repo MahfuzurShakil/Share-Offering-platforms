@@ -45,6 +45,11 @@ const TABLE_OF: Record<string, string> = {
   RevenuePeriod: 'revenue_periods',
   ProfitAllocation: 'profit_allocations',
   ProfitWithdrawal: 'profit_withdrawals',
+  OrgMember: 'org_members',
+  OrgMove: 'org_moves',
+  CommissionPlan: 'commission_plans',
+  CommissionLine: 'commission_lines',
+  CommissionPayout: 'commission_payouts',
 };
 
 type Json = Prisma.InputJsonValue;

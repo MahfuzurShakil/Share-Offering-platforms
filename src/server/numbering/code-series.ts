@@ -30,6 +30,15 @@ export interface CodeSeriesSpec {
   width?: number;
   /** the period the series restarts on; a year by default */
   period?: string;
+  /**
+   * No year in the code, and one series for ever: `ORG-001`, `CMP-001`.
+   *
+   * For the things that are not documents of a year. A member joined the
+   * organisation once and a commission plan runs across years, so stamping
+   * them 2026 would say something untrue and restart the count every January
+   * (REVENUE-SHARE-PLAN.md §8).
+   */
+  yearless?: boolean;
 }
 
 /** The series every numbered record in this product draws from. */
@@ -52,8 +61,9 @@ export const CODE_SERIES = {
   loan_repayment: { module: 'loan_repayment', prefix: 'LRP', width: 3 },
   fund_receipt: { module: 'fund_receipt', prefix: 'FND', width: 3 },
   fund_allocation: { module: 'fund_allocation', prefix: 'ALC', width: 3 },
-  org_member: { module: 'org_member', prefix: 'ORG', width: 3 },
-  commission_plan: { module: 'commission_plan', prefix: 'CMP', width: 3 },
+  /** not documents of a year: a member joined once, a plan runs across years */
+  org_member: { module: 'org_member', prefix: 'ORG', width: 3, yearless: true },
+  commission_plan: { module: 'commission_plan', prefix: 'CMP', width: 3, yearless: true },
   commission_payout: { module: 'commission_payout', prefix: 'CPO', width: 3 },
   journal_entry: { module: 'journal_entry', prefix: 'JV', width: 4 },
   bank_account: { module: 'bank_account', prefix: 'ACC', width: 2 },
@@ -84,7 +94,12 @@ export async function nextCode(
   at: Date = new Date(),
 ): Promise<string> {
   const spec: CodeSeriesSpec = CODE_SERIES[key];
-  const period = spec.period ?? periodOf(at);
+  /*
+   * A yearless series still needs a `period` to key its row on, because the
+   * table is unique on (module, period) — it just never restarts and never
+   * appears in the code.
+   */
+  const period = spec.period ?? (spec.yearless ? 'all' : periodOf(at));
   const width = spec.width ?? 3;
 
   const rows = await tx.$queryRaw<{ next_no: number }[]>`
@@ -97,5 +112,6 @@ export async function nextCode(
 
   const issued = rows[0]?.next_no;
   if (issued === undefined) throw new Error(`Could not allocate a ${spec.prefix} code.`);
-  return `${spec.prefix}-${period}-${String(issued).padStart(width, '0')}`;
+  const number = String(issued).padStart(width, '0');
+  return spec.yearless ? `${spec.prefix}-${number}` : `${spec.prefix}-${period}-${number}`;
 }

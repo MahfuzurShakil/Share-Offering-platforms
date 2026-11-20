@@ -143,6 +143,39 @@ describe('when a stage is reached', () => {
     expect(stageReachedOn({ trigger: 'paid_pct', threshold_pct: 50 }, short)).toBeNull();
     expect(stageReachedOn({ trigger: 'agreement_down_payment' }, { ...short, agreement_on: null })).toBeNull();
   });
+
+  /*
+   * A receipt is corrected by a reversing receipt, which is a negative row in
+   * the same ledger. So "reached" has to mean reached *and still standing* —
+   * taking the first crossing and never looking again would pay commission on
+   * money the company had given back.
+   */
+  it('comes back when the payment that reached it is reversed', () => {
+    const reversed = {
+      ...progress,
+      payments: [
+        { date: '2026-03-01', amount: 200_000 },
+        { date: '2026-04-01', amount: 300_000 },
+        { date: '2026-04-10', amount: -300_000 },
+      ],
+    };
+    expect(stageReachedOn({ trigger: 'paid_pct', threshold_pct: 50 }, reversed)).toBeNull();
+    // the down payment is still in, so its own stage stands
+    expect(stageReachedOn({ trigger: 'down_payment' }, reversed)).toBe('2026-03-01');
+  });
+
+  it('earns on the day the money stuck, not the day it first arrived', () => {
+    const again = {
+      ...progress,
+      payments: [
+        { date: '2026-03-01', amount: 200_000 },
+        { date: '2026-04-01', amount: 300_000 },
+        { date: '2026-04-10', amount: -300_000 },
+        { date: '2026-06-01', amount: 300_000 },
+      ],
+    };
+    expect(stageReachedOn({ trigger: 'paid_pct', threshold_pct: 50 }, again)).toBe('2026-06-01');
+  });
 });
 
 describe('plans', () => {

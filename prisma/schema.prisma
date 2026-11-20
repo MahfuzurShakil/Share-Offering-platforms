@@ -35,21 +35,22 @@ datasource db {
 /// expense heads, designations, document types. Statuses are NOT here — they
 /// are ENUMs in code, because the software branches on them.
 model LookupValue {
-  id         String    @id @default(uuid(7)) @db.Uuid
-  category   String    @db.VarChar(64)
+  id          String      @id @default(uuid(7)) @db.Uuid
+  category    String      @db.VarChar(64)
   /// for category='document_type' this is the entity_type it belongs to
-  scope      String?   @db.VarChar(64)
-  value      String    @db.VarChar(200)
+  scope       String?     @db.VarChar(64)
+  value       String      @db.VarChar(200)
   /// the stable machine key a record stores, where a label would be unsafe to rename
-  code       String?   @db.VarChar(64)
-  is_active  Boolean   @default(true)
-  sort_order Int       @default(0)
+  code        String?     @db.VarChar(64)
+  is_active   Boolean     @default(true)
+  sort_order  Int         @default(0)
   /// a seeded row the client may rename but not delete
-  is_system  Boolean   @default(false)
-  created_at DateTime  @default(now()) @db.Timestamptz
-  updated_at DateTime  @updatedAt @db.Timestamptz
-  created_by String?   @db.Uuid
-  deleted_at DateTime? @db.Timestamptz
+  is_system   Boolean     @default(false)
+  created_at  DateTime    @default(now()) @db.Timestamptz
+  updated_at  DateTime    @updatedAt @db.Timestamptz
+  created_by  String?     @db.Uuid
+  deleted_at  DateTime?   @db.Timestamptz
+  org_members OrgMember[]
 
   @@unique([category, scope, value])
   @@index([category, is_active, sort_order])
@@ -487,6 +488,7 @@ model Project {
   profit_allocations ProfitAllocation[]
   profit_withdrawals ProfitWithdrawal[]
   leads              Lead[]
+  commission_plans   CommissionPlan[]
 
   @@index([status])
   @@index([sales_status])
@@ -777,8 +779,9 @@ model ShareOffering {
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
 
-  project Project     @relation(fields: [project_id], references: [id])
-  sales   ShareSale[]
+  project          Project          @relation(fields: [project_id], references: [id])
+  sales            ShareSale[]
+  commission_plans CommissionPlan[]
 
   @@unique([project_id, round_no])
   @@index([project_id, status])
@@ -848,11 +851,15 @@ model ShareSale {
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
 
-  offering     ShareOffering      @relation(fields: [offering_id], references: [id])
-  project      Project            @relation(fields: [project_id], references: [id])
-  customer     Customer           @relation(fields: [customer_id], references: [id])
-  installments ShareInstallment[]
-  payments     SharePayment[]
+  offering         ShareOffering      @relation(fields: [offering_id], references: [id])
+  project          Project            @relation(fields: [project_id], references: [id])
+  customer         Customer           @relation(fields: [customer_id], references: [id])
+  installments     ShareInstallment[]
+  payments         SharePayment[]
+  /// who sold it (plan §6) — the column was already here, waiting for the
+  /// organisation to exist for it to point at
+  sold_by          OrgMember?         @relation(fields: [sold_by_member_id], references: [id])
+  commission_lines CommissionLine[]
 
   @@index([offering_id, status])
   @@index([project_id, status])
@@ -1267,4 +1274,301 @@ model ProfitWithdrawal {
   @@index([project_id, status])
   @@index([customer_id])
   @@map("profit_withdrawals")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * Sales organisation and commission (S3) — REVENUE-SHARE-PLAN.md §6–7
+ * Who sold it, who they report to, and what each of them earns as the money
+ * comes in.
+ * Two ideas carry the module:
+ * * **The tree is free, and it has a history.** Any depth, any names: the
+ * client's twenty founders with a lead under each is one shape, two
+ * levels is another. A move records the day it took effect, and
+ * commission on a sale is always read from the tree *as it was on the
+ * sale date* — so moving somebody to a new lead does not move their old
+ * commissions with them.
+ * * **Nothing is marked by hand.** A stage is released by the payment
+ * ledger reaching it, which is why `commission_lines` holds the claim
+ * while the ledgers stay the only record of the money.
+ * The maths is in `src/lib/domain/commission.ts`, untouched and unit-tested:
+ * the chain on a date, which plan applies, how a total splits over stages,
+ * the payout arithmetic. The service decides when those sums may be done and
+ * what they are frozen into (AGENTS.md).
+ * ------------------------------------------------------------------
+ */
+
+enum OrgMemberStatus {
+  active
+  left
+}
+
+/// One person in the sales organisation. They may be a staff user, a company
+/// partner, both, or an outside agent who never logs in — which is why
+/// `user_id` is optional and nothing here duplicates the users table.
+model OrgMember {
+  id    String  @id @default(uuid(7)) @db.Uuid
+  code  String  @unique @db.VarChar(40)
+  name  String  @db.VarChar(200)
+  phone String? @db.VarChar(20)
+
+  /// The `org_designation` lookup row, by id rather than by label: a plan's
+  /// overrides are keyed by designation, and renaming one in Master Data must
+  /// not detach every member and override from it.
+  designation_id String  @db.Uuid
+  /// who they report to now; null = top level
+  parent_id      String? @db.Uuid
+  /// the staff login this member is, where they have one
+  user_id        String? @db.Uuid
+  /// the company partner they are, where they are one (Fund & Partners, S4)
+  partner_id     String? @db.Uuid
+
+  joined_on DateTime        @db.Date
+  left_on   DateTime?       @db.Date
+  status    OrgMemberStatus @default(active)
+  notes     String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  designation LookupValue @relation(fields: [designation_id], references: [id])
+  parent      OrgMember?  @relation("org_tree", fields: [parent_id], references: [id])
+  reports     OrgMember[] @relation("org_tree")
+
+  moves   OrgMove[]
+  sales   ShareSale[]
+  lines   CommissionLine[]
+  payouts CommissionPayout[]
+
+  @@index([parent_id])
+  @@index([designation_id])
+  @@index([status])
+  @@index([user_id])
+  @@map("org_members")
+}
+
+/// A change of who a member reports to, from a date.
+///
+/// Append-only and never deleted: it is what makes a past commission readable.
+/// Without it, re-reading the tree today would quietly move an old sale's
+/// override to whoever the seller reports to now.
+model OrgMove {
+  id             String   @id @default(uuid(7)) @db.Uuid
+  member_id      String   @db.Uuid
+  from_parent_id String?  @db.Uuid
+  to_parent_id   String?  @db.Uuid
+  effective_date DateTime @db.Date
+  note           String?
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  member OrgMember @relation(fields: [member_id], references: [id], onDelete: Cascade)
+
+  @@index([member_id, effective_date])
+  @@map("org_moves")
+}
+
+enum CommissionAppliesTo {
+  share_sale
+  /// Flat and plot sale — Phase 2. The value exists so that arm slots back in
+  /// without touching the plans or the lines already earned.
+  booking
+}
+
+/// How a person's whole commission on one sale is worked out.
+enum CommissionBasis {
+  pct
+  per_share
+  per_sale
+}
+
+/// What releases a stage. Every one of these is read from a ledger.
+enum CommissionTrigger {
+  agreement
+  down_payment
+  agreement_down_payment
+  paid_pct
+  fully_paid
+  handover
+}
+
+/// What happens to commission already paid when the sale is cancelled.
+enum CommissionCancelRule {
+  /// taken back off the member's next payout
+  recover
+  write_off
+}
+
+enum CommissionPlanStatus {
+  draft
+  active
+  retired
+}
+
+enum CommissionSaleKind {
+  share
+  booking
+}
+
+/// `pending` → `earned` → `approved` → `paid`, or `void` / `recovered`.
+enum CommissionLineStatus {
+  pending
+  earned
+  approved
+  paid
+  void
+  recovered
+}
+
+enum CommissionLineRole {
+  seller
+  override
+}
+
+/// What is earned, and when it is released (plan §7.1).
+///
+/// `stages` and `overrides` are JSONB because they are ordered lists a person
+/// edits whole: a stage has no identity outside its plan and nothing queries
+/// across them. Their shapes are `CommissionStage` and `CommissionOverride` in
+/// `src/lib/db/types.ts`, checked by zod at the route and by `planProblem` in
+/// the domain before a plan may go active.
+model CommissionPlan {
+  id   String @id @default(uuid(7)) @db.Uuid
+  code String @unique @db.VarChar(40)
+  name String @db.VarChar(200)
+
+  applies_to  CommissionAppliesTo @default(share_sale)
+  /// null = every project: the default plan
+  project_id  String?             @db.Uuid
+  /// share sales only: one round
+  offering_id String?             @db.Uuid
+
+  seller_basis CommissionBasis @default(pct)
+  seller_value Decimal         @db.Decimal(18, 6)
+
+  /// ordered; the last stage releases whatever is left
+  stages    Json
+  overrides Json
+
+  cancel_rule    CommissionCancelRule @default(recover)
+  effective_from DateTime             @db.Date
+  effective_to   DateTime?            @db.Date
+  status         CommissionPlanStatus @default(draft)
+  notes          String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  project  Project?         @relation(fields: [project_id], references: [id])
+  offering ShareOffering?   @relation(fields: [offering_id], references: [id])
+  lines    CommissionLine[]
+
+  @@index([status, applies_to])
+  @@index([project_id])
+  @@index([offering_id])
+  @@index([effective_from])
+  @@map("commission_plans")
+}
+
+/// One person's part of one stage of one sale.
+///
+/// The chain is snapshotted when the lines are made, so `designation_at_sale`
+/// and `level` are the words and the shape of the organisation on the sale
+/// date, not today's. The amount never changes once written; what moves is the
+/// status, as the ledger reaches each stage. Hence no `deleted_at`: a line
+/// that should not have existed becomes `void`, with the reason on it.
+model CommissionLine {
+  id      String @id @default(uuid(7)) @db.Uuid
+  plan_id String @db.Uuid
+
+  sale_kind     CommissionSaleKind @default(share)
+  share_sale_id String?            @db.Uuid
+  /// Phase 2
+  booking_id    String?            @db.Uuid
+  project_id    String?            @db.Uuid
+
+  member_id           String             @db.Uuid
+  role                CommissionLineRole
+  /// the designation's label when the line was made
+  designation_at_sale String             @db.VarChar(200)
+  /// 0 = the seller, 1 = their lead, 2 = the lead's lead …
+  level               Int                @default(0)
+
+  stage_key   String @db.VarChar(64)
+  stage_label String @db.VarChar(200)
+  stage_seq   Int
+
+  sale_date   DateTime @db.Date
+  sale_amount Decimal  @db.Decimal(18, 2)
+  amount      Decimal  @db.Decimal(18, 2)
+
+  status      CommissionLineStatus @default(pending)
+  earned_on   DateTime?            @db.Date
+  approved_by String?              @db.Uuid
+  approved_on DateTime?            @db.Date
+  payout_id   String?              @db.Uuid
+
+  /// a paid line on a cancelled sale, waiting to come off the next payout
+  to_recover          Boolean @default(false)
+  recovered_payout_id String? @db.Uuid
+  void_reason         String?
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  plan                CommissionPlan    @relation(fields: [plan_id], references: [id])
+  member              OrgMember         @relation(fields: [member_id], references: [id])
+  sale                ShareSale?        @relation(fields: [share_sale_id], references: [id], onDelete: Cascade)
+  payout              CommissionPayout? @relation("payout_lines", fields: [payout_id], references: [id])
+  recovered_on_payout CommissionPayout? @relation("payout_recoveries", fields: [recovered_payout_id], references: [id])
+
+  @@index([member_id, status])
+  @@index([share_sale_id])
+  @@index([project_id])
+  @@index([plan_id])
+  @@index([payout_id])
+  @@map("commission_lines")
+}
+
+/// Money leaving the company: one member's approved lines, paid at once.
+///
+/// Immutable, like every other row that records money moving — a mistake is
+/// corrected by a further payout, never by editing this one, and Postgres
+/// refuses `UPDATE` and `DELETE` on it.
+model CommissionPayout {
+  id           String  @id @default(uuid(7)) @db.Uuid
+  code         String  @unique @db.VarChar(40)
+  member_id    String  @db.Uuid
+  /// approved lines paid
+  lines_total  Decimal @db.Decimal(18, 2)
+  /// paid commission on cancelled sales, taken back
+  recovered    Decimal @default(0) @db.Decimal(18, 2)
+  tax_pct      Decimal @default(0) @db.Decimal(6, 3)
+  /// AIT on commission, where the client withholds it
+  tax_withheld Decimal @default(0) @db.Decimal(18, 2)
+  /// lines_total − recovered − tax_withheld: what left the account
+  net          Decimal @db.Decimal(18, 2)
+
+  account_id   String?  @db.Uuid
+  paid_on      DateTime @db.Date
+  reference_no String?  @db.VarChar(120)
+  notes        String?
+
+  created_at DateTime @default(now()) @db.Timestamptz
+  updated_at DateTime @updatedAt @db.Timestamptz
+  created_by String?  @db.Uuid
+
+  member     OrgMember        @relation(fields: [member_id], references: [id])
+  lines      CommissionLine[] @relation("payout_lines")
+  recoveries CommissionLine[] @relation("payout_recoveries")
+
+  @@index([member_id, paid_on])
+  @@map("commission_payouts")
 }
