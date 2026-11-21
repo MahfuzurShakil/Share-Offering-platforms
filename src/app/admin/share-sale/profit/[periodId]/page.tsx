@@ -1,12 +1,10 @@
 'use client';
 
 import Link from 'next/link';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
-import { ArrowLeft, BadgeCheck, LifeBuoy, Megaphone, RotateCcw, Undo2 } from 'lucide-react';
+import { ArrowLeft, BadgeCheck, Megaphone, RotateCcw, Undo2 } from 'lucide-react';
 import { FormError, PeriodBadge, StatementLine, Waterfall } from '@/components/admin/revenue/bits';
-import { CoverLossModal } from '@/components/admin/revenue/RevenueModals';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -16,35 +14,46 @@ import { ExportCsvButton } from '@/components/ui/ExportCsvButton';
 import { Field, MoneyInput, TextInput } from '@/components/ui/Field';
 import { PageHeader } from '@/components/ui/PageHeader';
 import { useSession } from '@/lib/auth/session';
-import { LOSS_COVER_LABEL } from '@/lib/domain/revenue-share';
-import { revenuePeriodRepository, revenuePolicyRepository, type HolderLine } from '@/lib/repositories';
+import { messageOf } from '@/lib/api/client';
+import {
+  distributionKeys,
+  revenueApi,
+  revenueKeys,
+  type ApiHolderLine,
+} from '@/lib/api/revenue';
+import { useApi, useRefresh } from '@/lib/api/use-api';
 import { formatBdt, formatDate, todayLocal } from '@/lib/utils/format';
 
 /**
  * One period (REVENUE-SHARE-PLAN.md §2.3–§5.1): the frozen statement,
  * management's approval of how much to share, the declaration that writes
- * every holder's line, and — for a loss — how it was covered.
+ * every holder's line, and what each head contributed.
+ *
+ * All of it arrives in one read — `GET /revenue-periods/{id}` — because a
+ * preview assembled from several calls can disagree with itself while the
+ * person is looking at it.
  */
 export default function PeriodPage() {
   const { periodId } = useParams<{ periodId: string }>();
-  const { can, userId } = useSession();
+  const router = useRouter();
+  const { can } = useSession();
   const mayEdit = can('share_sale', 'edit');
-  const detail = useLiveQuery(() => revenuePeriodRepository.detail(periodId), [periodId]);
-  const policy = useLiveQuery(
-    () => (detail ? revenuePolicyRepository.forProject(detail.period.project_id) : Promise.resolve(undefined)),
-    [detail?.period.project_id],
+
+  const detail = useApi(revenueKeys.period(periodId), (signal) =>
+    revenueApi.detail(periodId, signal),
   );
-  const [dialog, setDialog] = useState<'approve' | 'unapprove' | 'declare' | 'reopen' | 'cover' | null>(null);
+  const refresh = useRefresh([revenueKeys.all, distributionKeys.all]);
+
+  const [dialog, setDialog] = useState<'approve' | 'unapprove' | 'declare' | 'reopen' | null>(null);
   const [amount, setAmount] = useState('');
   const [recordDate, setRecordDate] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
 
   if (detail === undefined) return <p className="text-sm text-ink-muted">Loading…</p>;
-  if (!detail) return <p className="text-sm text-ink-muted">This period no longer exists.</p>;
-  const { period: p } = detail;
+  const p = detail.period;
+  const policy = detail.policy;
   const loss = Math.max(0, -p.operating_profit);
-  const covered = detail.coverings.reduce((s, c) => s + c.amount, 0);
   // a loss period shares nothing, so there is no one to preview
   const lines = p.status === 'declared' ? detail.lines : loss > 0 ? [] : detail.preview;
 
@@ -53,15 +62,16 @@ export default function PeriodPage() {
     setBusy(true);
     try {
       await action();
+      await refresh();
       setDialog(null);
     } catch (e) {
-      setError(e instanceof Error ? e.message : 'Could not save.');
+      setError(messageOf(e));
     } finally {
       setBusy(false);
     }
   }
 
-  const columns: Column<HolderLine & { id: string }>[] = [
+  const columns: Column<ApiHolderLine & { id: string }>[] = [
     {
       key: 'name',
       header: 'Holder',
@@ -113,12 +123,9 @@ export default function PeriodPage() {
             <div className="flex flex-wrap gap-2">
               {p.status === 'closed' && (
                 <>
-                  {/* its cover is recorded against these figures, so they stay */}
-                  {detail.coverings.length === 0 && (
-                    <Button variant="outline" onClick={() => setDialog('reopen')}>
-                      <RotateCcw className="size-4" /> Reopen
-                    </Button>
-                  )}
+                  <Button variant="outline" onClick={() => setDialog('reopen')}>
+                    <RotateCcw className="size-4" /> Reopen
+                  </Button>
                   {loss === 0 && (
                     <Button
                       onClick={() => {
@@ -146,11 +153,6 @@ export default function PeriodPage() {
                   </Button>
                 </>
               )}
-              {loss > 0 && covered < loss && (
-                <Button onClick={() => setDialog('cover')}>
-                  <LifeBuoy className="size-4" /> Record how it was covered
-                </Button>
-              )}
             </div>
           )
         }
@@ -165,7 +167,7 @@ export default function PeriodPage() {
                 <p className="mt-0.5 text-xs text-ink-muted">
                   {p.status === 'declared'
                     ? `Ownership on ${formatDate(p.record_date)}, frozen at declaration.`
-                    : `A preview on today's ownership. ${p.declared > 0 ? '' : 'Nothing to share yet.'}`}
+                    : `A preview on today's ownership. ${p.declared > 0 ? '' : 'Nothing has been approved yet, so this is the whole of what is available.'}`}
                 </p>
               </div>
               {lines.length > 0 && (
@@ -204,26 +206,24 @@ export default function PeriodPage() {
           {loss > 0 && (
             <Card>
               <CardHeader
-                title="How the loss was covered"
-                subtitle={`${formatBdt(loss)} lost · ${formatBdt(covered)} accounted for`}
-                action={covered >= loss ? <Badge tone="green">Covered</Badge> : <Badge tone="amber">{formatBdt(loss - covered)} open</Badge>}
+                title="This period lost money"
+                subtitle={`${formatBdt(loss)} lost`}
+                action={<Badge tone="amber">Carried forward</Badge>}
               />
-              {detail.coverings.length === 0 && <p className="text-sm text-ink-muted">Not recorded yet.</p>}
-              {detail.coverings.map((c) => (
-                <StatementLine
-                  key={c.id}
-                  label={LOSS_COVER_LABEL[c.source]}
-                  hint={c.loan_code ?? undefined}
-                  value={c.amount}
-                />
-              ))}
+              <p className="text-sm text-ink-muted">
+                {policy?.loss_rule === 'recover_first'
+                  ? 'Nothing is shared, and the loss is recovered out of the next period that earns before anything is distributed.'
+                  : 'Nothing is shared. The policy does not carry this loss into the next period.'}{' '}
+                Recording that the owners or a loan covered it instead comes with Loans, in the
+                Money module.
+              </p>
             </Card>
           )}
         </div>
 
         <div className="space-y-5">
           <Card>
-            <CardHeader title="Statement" action={<PeriodBadge status={p.status} />} />
+            <CardHeader title="Statement" action={<PeriodBadge status={p.status === 'cancelled' ? 'closed' : p.status} />} />
             <Waterfall s={p} reservePct={policy?.reserve_pct} />
             {(p.status === 'approved' || p.status === 'declared') && (
               <StatementLine label="Declared by management" value={p.declared} strong tone="good" />
@@ -234,6 +234,7 @@ export default function PeriodPage() {
           </Card>
           <Card>
             <CardHeader title="By head" />
+            {detail.heads.length === 0 && <p className="text-sm text-ink-muted">No entries in this period.</p>}
             {detail.heads.map((h) => (
               <StatementLine key={`${h.direction}${h.head}`} label={h.head} value={h.amount} minus={h.direction === 'cost'} />
             ))}
@@ -262,7 +263,7 @@ export default function PeriodPage() {
         confirmLabel="Approve"
         busy={busy}
         onCancel={() => setDialog(null)}
-        onConfirm={() => run(() => revenuePeriodRepository.approve(p.id, Number(amount), userId))}
+        onConfirm={() => run(() => revenueApi.approve(p.id, Number(amount)))}
       >
         <Field label="Amount to share" hint="Less keeps the rest in the project.">
           <MoneyInput value={amount} onChange={(e) => setAmount(e.target.value)} />
@@ -281,7 +282,7 @@ export default function PeriodPage() {
         confirmLabel="Declare"
         busy={busy}
         onCancel={() => setDialog(null)}
-        onConfirm={() => run(() => revenuePeriodRepository.declare(p.id, recordDate, userId))}
+        onConfirm={() => run(() => revenueApi.declare(p.id, recordDate))}
       >
         <Field label="Record date" hint="Ownership on this day decides who shares.">
           <TextInput type="date" value={recordDate} min={p.period_end} max={todayLocal()} onChange={(e) => setRecordDate(e.target.value)} />
@@ -306,7 +307,13 @@ export default function PeriodPage() {
           setDialog(null);
           setError('');
         }}
-        onConfirm={() => run(() => revenuePeriodRepository.reopen(p.id))}
+        /* reopening removes the period row, so there is no page to come back to */
+        onConfirm={() =>
+          run(async () => {
+            await revenueApi.reopen(p.id);
+            router.push(`/admin/projects/${p.project_id}`);
+          })
+        }
       />
 
       <ConfirmDialog
@@ -318,10 +325,8 @@ export default function PeriodPage() {
         confirmLabel="Back to closed"
         busy={busy}
         onCancel={() => setDialog(null)}
-        onConfirm={() => run(() => revenuePeriodRepository.unapprove(p.id))}
+        onConfirm={() => run(() => revenueApi.unapprove(p.id))}
       />
-
-      {dialog === 'cover' && <CoverLossModal period={p} uncovered={loss - covered} onClose={() => setDialog(null)} />}
     </>
   );
 }

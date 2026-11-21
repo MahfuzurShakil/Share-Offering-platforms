@@ -117,6 +117,9 @@ export interface ApiProfitAllocation {
   holder_type: 'customer' | 'partner';
   customer_id: string | null;
   customer_name: string | null;
+  /** which partner an owners' line belongs to; null when none are on file */
+  partner_id: string | null;
+  partner_name: string | null;
   share_sale_id: string | null;
   ownership_pct: number;
   eligibility_factor: number;
@@ -141,6 +144,25 @@ export interface CustomerEarnings {
     net_credited: number;
   }[];
   totals: { gross: number; tax_withheld: number; credited: number };
+}
+
+/** A holder's line, with the name to show against it. */
+export interface ApiHolderLine {
+  name: string;
+  /** the customer's or partner's display code */
+  code: string | null;
+  allocation: ApiProfitAllocation;
+}
+
+export interface ApiPeriodDetail {
+  period: ApiRevenuePeriod;
+  project_name: string;
+  policy: ApiRevenuePolicy | null;
+  /** written lines, once the period is declared */
+  lines: ApiHolderLine[];
+  /** what the lines would be, for a period not declared yet */
+  preview: ApiHolderLine[];
+  heads: { direction: string; head: string; amount: number }[];
 }
 
 export const revenueApi = {
@@ -205,8 +227,17 @@ export const revenueApi = {
     );
   },
 
-  allocations(periodId: string, signal?: AbortSignal): Promise<ApiProfitAllocation[]> {
-    return api.get<ApiProfitAllocation[]>(`/revenue-periods/${periodId}`, undefined, signal);
+  /** Takes an approval back, before anything has been declared. */
+  unapprove(periodId: string): Promise<ApiRevenuePeriod> {
+    return api.patch<ApiRevenuePeriod>(`/revenue-periods/${periodId}`, { action: 'unapprove' });
+  },
+
+  /**
+   * One period, whole — the statement, the heads, and the holder lines (or the
+   * preview, when it has not been declared yet).
+   */
+  detail(periodId: string, signal?: AbortSignal): Promise<ApiPeriodDetail> {
+    return api.get<ApiPeriodDetail>(`/revenue-periods/${periodId}`, undefined, signal);
   },
 
   earnings(customerId: string, signal?: AbortSignal): Promise<CustomerEarnings> {
@@ -329,6 +360,6 @@ export const revenueKeys = {
   entries: (projectId: string, query: object = {}) =>
     ['revenue', 'entries', projectId, query] as const,
   periods: (projectId: string) => ['revenue', 'periods', projectId] as const,
-  allocations: (periodId: string) => ['revenue', 'allocations', periodId] as const,
+  period: (periodId: string) => ['revenue', 'period', periodId] as const,
   earnings: (customerId: string) => ['revenue', 'earnings', customerId] as const,
 };

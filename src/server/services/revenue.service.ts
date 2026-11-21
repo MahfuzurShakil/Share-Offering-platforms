@@ -32,11 +32,9 @@ import { today } from './share-offering.service';
  * closes it. What is here is *when* those sums are allowed and what they are
  * frozen into.
  *
- * The one thing deliberately left out: the owners' side is a single line for
- * now, because who the owners are — company partners, project investors and
- * their percentages — lives in the Money module, which is still on the interim
- * layer. The split already works out what the owners get; when partners move,
- * that one line becomes several and nothing else changes.
+ * The owners' side is read from `partners` on the record date, so a percentage
+ * changed since cannot re-split a period already declared. With no partner on
+ * file it stays one unattributed line, which is where a client starts.
  */
 
 /* ------------------------------------------------------------------ *
@@ -1208,4 +1206,225 @@ export async function customerEarnings(customerId: string) {
       credited: lines.reduce((t, l) => t + l.net_credited, 0),
     },
   };
+}
+
+/* ------------------------------------------------------------------ *
+ * One period, whole
+ * ------------------------------------------------------------------ */
+
+/** A holder's line, with the name to show against it. */
+export interface HolderLineDto {
+  name: string;
+  /** the customer's or partner's display code */
+  code: string | null;
+  allocation: ProfitAllocationDto;
+}
+
+export interface PeriodDetailDto {
+  period: RevenuePeriodDto;
+  project_name: string;
+  policy: RevenuePolicyDto | null;
+  /** written lines, once the period is declared */
+  lines: HolderLineDto[];
+  /** what the lines *would* be, for a period not declared yet */
+  preview: HolderLineDto[];
+  /** what the period's entries add up to, per head */
+  heads: { direction: string; head: string; amount: number }[];
+}
+
+/**
+ * Everything the period page shows, in one read.
+ *
+ * The preview is the same arithmetic the declaration will do — `splitDeclared`
+ * over the cap table — run against today's ownership rather than a frozen
+ * record date. That is deliberate: a management meeting looks at this before
+ * approving, and a preview worked out a different way from the real thing is
+ * worse than no preview at all.
+ */
+export async function periodDetail(
+  principal: StaffPrincipal,
+  periodId: string,
+): Promise<PeriodDetailDto> {
+  const row = await prisma.revenuePeriod.findUnique({
+    where: { id: periodId },
+    select: { ...PERIOD_SELECT, project: { select: { name: true } } },
+  });
+  if (!row) throw notFound('That period');
+  const period = toPeriodDto(row as unknown as PeriodRow);
+  assertWithinScope(principal, period.project_id);
+
+  const policyRow = await prisma.revenuePolicy.findUnique({
+    where: { project_id: period.project_id },
+    select: POLICY_SELECT,
+  });
+
+  const grouped = await prisma.revenueEntry.groupBy({
+    by: ['direction', 'head'],
+    where: { period_id: periodId, deleted_at: null },
+    _sum: { amount: true },
+    orderBy: [{ direction: 'asc' }, { head: 'asc' }],
+  });
+  const heads = (
+    grouped as { direction: string; head: string; _sum: { amount: Prisma.Decimal | null } }[]
+  ).map((g) => ({
+    direction: g.direction,
+    head: g.head,
+    amount: g._sum.amount?.toNumber() ?? 0,
+  }));
+
+  const detail: PeriodDetailDto = {
+    period,
+    project_name: (row as unknown as { project: { name: string } }).project.name,
+    policy: policyRow ? toPolicyDto(policyRow) : null,
+    lines: [],
+    preview: [],
+    heads,
+  };
+
+  if (period.status === 'declared') {
+    detail.lines = await withHolderNames(await listAllocations(principal, periodId));
+    return detail;
+  }
+
+  /*
+   * Nothing to preview for a loss period — it shares nothing — and nothing to
+   * preview without a policy, since the split needs the withholding rate.
+   */
+  if (!policyRow || period.operating_profit < 0) return detail;
+  detail.preview = await previewLines(policyRow, period);
+  return detail;
+}
+
+/** The split as it would fall today, for a period still being decided. */
+async function previewLines(policy: PolicyRow, period: RevenuePeriodDto): Promise<HolderLineDto[]> {
+  const date = today() > period.period_end ? today() : period.period_end;
+  const { customers, owners } = await capTableAt(
+    prisma,
+    period.project_id,
+    policy,
+    date,
+    period.period_start,
+    period.period_end,
+  );
+  /* before approval nothing has been decided, so the preview shows the ceiling */
+  const amount = period.declared > 0 ? period.declared : period.available;
+  const split = splitDeclared(amount, customers, owners, num(policy.tax_withholding_pct));
+  const bySaleId = new Map(customers.map((c) => [c.key, c]));
+
+  const allocations: ProfitAllocationDto[] = split.map((line) => {
+    const holding = bySaleId.get(line.key);
+    return {
+      /* a preview has no row of its own, so the key it was split on is its id */
+      id: 'preview-' + line.key,
+      period_id: period.id,
+      project_id: period.project_id,
+      holder_type: holding ? 'customer' : 'partner',
+      customer_id: holding?.customer_id ?? null,
+      customer_name: null,
+      partner_id: holding || line.key === 'owners' ? null : line.key,
+      partner_name: null,
+      share_sale_id: holding?.sale_id ?? null,
+      ownership_pct: line.ownership_pct,
+      eligibility_factor: line.factor,
+      gross: line.gross,
+      tax_withheld: line.tax,
+      adjusted_to_dues: 0,
+      net_credited: line.net,
+      created_at: new Date().toISOString(),
+    };
+  });
+
+  return withHolderNames(allocations);
+}
+
+/**
+ * Puts a name and a code on each line.
+ *
+ * A declared line carries its customer's and partner's name already; a preview
+ * line does not, so both are looked up here and neither path has to remember.
+ */
+async function withHolderNames(allocations: ProfitAllocationDto[]): Promise<HolderLineDto[]> {
+  const customerIds = [
+    ...new Set(allocations.map((a) => a.customer_id).filter(Boolean)),
+  ] as string[];
+  const partnerIds = [...new Set(allocations.map((a) => a.partner_id).filter(Boolean))] as string[];
+
+  type Named = { id: string; name: string; code: string | null };
+  const [customers, partners] = await Promise.all([
+    customerIds.length
+      ? (prisma.customer.findMany({
+          where: { id: { in: customerIds } },
+          select: { id: true, name: true, code: true },
+        }) as Promise<Named[]>)
+      : Promise.resolve<Named[]>([]),
+    partnerIds.length
+      ? (prisma.partner.findMany({
+          where: { id: { in: partnerIds } },
+          select: { id: true, name: true, code: true },
+        }) as Promise<Named[]>)
+      : Promise.resolve<Named[]>([]),
+  ]);
+  const byCustomer = new Map(customers.map((c) => [c.id, c]));
+  const byPartner = new Map(partners.map((p) => [p.id, p]));
+
+  return allocations.map((allocation) => {
+    if (allocation.customer_id) {
+      const customer = byCustomer.get(allocation.customer_id);
+      return {
+        name: allocation.customer_name ?? customer?.name ?? 'Customer',
+        code: customer?.code ?? null,
+        allocation,
+      };
+    }
+    if (allocation.partner_id) {
+      const partner = byPartner.get(allocation.partner_id);
+      return {
+        name: allocation.partner_name ?? partner?.name ?? 'Partner',
+        code: partner?.code ?? null,
+        allocation,
+      };
+    }
+    /* no partners on file: one unattributed owners' line, which must keep working */
+    return { name: 'Owners', code: null, allocation };
+  });
+}
+
+/**
+ * Takes an approval back, so the amount to share can be decided again.
+ *
+ * Only before declaration, which is the point of no return. Reopening is a
+ * different and heavier move — it unlocks the period's entries and deletes the
+ * period row — so this exists on its own: management changing its mind about
+ * how much to share should not have to unlock the accounts to do it.
+ */
+export async function unapprovePeriod(
+  principal: StaffPrincipal,
+  periodId: string,
+): Promise<RevenuePeriodDto> {
+  const row = await withTx(async (tx: Tx) => {
+    const period = await tx.revenuePeriod.findUnique({
+      where: { id: periodId },
+      select: { id: true, project_id: true, status: true, label: true },
+    });
+    if (!period) throw notFound('That period');
+    assertWithinScope(principal, period.project_id);
+    if (period.status === 'declared') {
+      throw conflict(period.label + ' has been declared. Its lines cannot be taken back.');
+    }
+    if (period.status !== 'approved') {
+      throw conflict('Only an approved period can go back to closed.');
+    }
+
+    return tx.revenuePeriod.update({
+      where: { id: periodId },
+      data: {
+        status: 'closed',
+        declared: new Prisma.Decimal(0),
+        approved_by: null,
+        approved_on: null,
+      },
+      select: PERIOD_SELECT,
+    });
+  });
+  return toPeriodDto(row);
 }

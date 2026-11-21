@@ -1,16 +1,18 @@
 'use client';
 
 import { WebsiteToggle } from '@/components/admin/documents/WebsiteToggle';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { ImageIcon, Star } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
 import { EmptyState } from '@/components/ui/EmptyState';
-import { useBlobUrl } from '@/components/ui/useBlobUrl';
-import type { DocumentRecord } from '@/lib/db/types';
+import {
+  documentFileUrl,
+  documentKeys,
+  documentsApi,
+  type ApiDocument,
+} from '@/lib/api/documents';
 import { projectKeys, projectsApi, type ApiProject } from '@/lib/api/projects';
-import { useApiMutation } from '@/lib/api/use-api';
-import { documentRepository } from '@/lib/repositories';
+import { useApi, useApiMutation } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 
 /**
@@ -28,12 +30,6 @@ import { cn } from '@/lib/utils/cn';
  * This is the view over the subset that is pictures.
  */
 export function ProjectGalleryPanel({ project }: { project: ApiProject }) {
-  /*
-   * The project is a Postgres record now; the files are still the interim Dexie
-   * scaffolding, so this screen reads from both until documents and file
-   * storage move (S4). Which picture the website leads with is a column on the
-   * project, so that half goes through the API.
-   */
   const setDisplay = useApiMutation(
     (documentId: string) =>
       projectsApi.update(project.id, {
@@ -45,9 +41,8 @@ export function ProjectGalleryPanel({ project }: { project: ApiProject }) {
     [projectKeys.all],
   );
 
-  const documents = useLiveQuery(
-    () => documentRepository.listForEntity('project', project.id),
-    [project.id],
+  const documents = useApi(documentKeys.forEntity('project', project.id), (signal) =>
+    documentsApi.listForEntity('project', project.id, signal),
   );
 
   const pictures = (documents ?? []).filter(
@@ -102,13 +97,17 @@ function PictureTile({
   isDisplay,
   onUseAsDisplay,
 }: {
-  picture: DocumentRecord;
+  picture: ApiDocument;
   isDisplay: boolean;
   onUseAsDisplay: () => void;
 }) {
-  const blobUrl = useBlobUrl(picture.file_data);
-  // a picture can also be a hosted image linked by URL (the demo's stock photos)
-  const url = blobUrl ?? (/^https?:\/\//.test(picture.file_url) ? picture.file_url : null);
+  /*
+   * Served by the API, not from a public folder: the route checks the
+   * permission on every read and the browser sends the session cookie with an
+   * image request, so no blob has to be fetched by hand. A picture recorded as
+   * an external link is shown from where it lives.
+   */
+  const url = picture.has_file ? documentFileUrl(picture.id) : picture.external_url;
 
   return (
     <figure
@@ -119,7 +118,7 @@ function PictureTile({
     >
       <div className="grid h-32 place-items-center bg-canvas">
         {url ? (
-          // the blob is local to this browser; next/image adds nothing here
+          // served by our own API behind a permission check; next/image adds nothing
           // eslint-disable-next-line @next/next/no-img-element
           <img
             src={url}

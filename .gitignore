@@ -44,3 +44,6 @@ next-env.d.ts
 
 # netlify
 .netlify
+
+# uploaded files, when the local disk is the document store
+.storage

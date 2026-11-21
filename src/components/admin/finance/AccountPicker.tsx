@@ -1,8 +1,8 @@
 'use client';
 
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Field, SelectInput } from '@/components/ui/Field';
-import { bankAccountRepository } from '@/lib/repositories';
+import { accountKeys, accountsApi } from '@/lib/api/money';
+import { useApi } from '@/lib/api/use-api';
 
 /**
  * Which account the money moved through (Tier 3.5).
@@ -32,7 +32,9 @@ export function AccountPicker({
   required?: boolean;
   error?: string;
 }) {
-  const accounts = useLiveQuery(() => bankAccountRepository.options(), []);
+  const accounts = useApi(accountKeys.list({ is_active: true }), (signal) =>
+    accountsApi.list({ is_active: true }, signal),
+  );
   if (!accounts) return null;
   if (accounts.length === 0) {
     if (!required) return null;

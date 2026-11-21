@@ -1,6 +1,6 @@
 # Next session — where to pick up
 
-Written 21 Nov 2026, at commit `5701ce5`. Working
+Written 21 Nov 2026, at commit `0187d7b` + the documents slice. Working
 tree clean, pushed to `origin`
 (github.com/MahfuzurShakil/Share-Offering-platforms). `prototype` is the other
 remote: it is where Phase 2 reads Land and Construction back out of, never
@@ -26,9 +26,10 @@ the person who sold it is paid their commission.
 | **Withdrawals** | Balances (never stored — always `credited − paid − pending`), request → approve → pay, or refuse. |
 | **Sales team & commission** | A free tree of any depth with a **history**, so commission is read from the tree as it was on the sale date. Plans say what is earned and in what stages; the payment ledger releases each stage with nothing marked by hand; Accounts approves; a payout pays a member everything approved at once and can never be edited. |
 | **Money (part)** | Accounts (`ACC-001`) for a payout or a withdrawal to name, and partners (`PTR-001`) — the company's, or one project's own investor who takes their share of it first. A percentage changes through a **dated** change, so a declaration made in June is not re-split in October, and `GET /projects/{id}/cap-table` puts customers and owners on one page as of any date. |
-| **Checks** | 462 tests in 24 files, lint and types clean, production build of 68 pages. |
+| **Documents** | Every record's papers through one panel: uploaded to `server/storage` (a disk now, a bucket later), served by `GET /documents/{id}/file` behind the **owning record's** permission, never by a public path. A project's gallery and display picture, and the website checklist, read it. |
+| **Checks** | 480 tests in 25 files, lint and types clean, production build of 68 pages. |
 
-13 services, 62 API route files, and the screens for all of the above read them
+14 services, 66 API route files, and the screens for all of the above read them
 through `src/lib/api/*` — except the Money slice, which has no screens yet (below).
 
 ### The whole-flow test
@@ -53,14 +54,13 @@ repository has.
    are the prototype's versions — both were written as a *construction* cost
    view and need rewriting as a share-sale money view (AGENTS.md says so
    explicitly). `domain/cash.ts` already holds the pure part.
-2. **Three screens that can come back now**, each one small, each previously
-   cut because its data did not exist:
+2. **Two pickers that can come back now**, each one small, each previously cut
+   because its data did not exist (`src/lib/api/money.ts` now serves both):
    - the member form's **Company partner** picker
-     (`components/admin/sales-team/parts.tsx`) — `GET /partners` serves it;
+     (`components/admin/sales-team/parts.tsx`) — `GET /partners`;
    - the payout's **Paid from** account picker
-     (`app/admin/sales-team/payouts/page.tsx`) — `GET /accounts` serves it;
-   - `components/admin/finance/AccountPicker.tsx`, still on Dexie, which the
-     withdrawal screens use.
+     (`app/admin/sales-team/payouts/page.tsx`) — `GET /accounts`.
+   `components/admin/finance/AccountPicker.tsx` is already on the API.
 3. **The Money screens** themselves: Partners, Accounts, Fund, Loans, Cash
    Position, and a **cap table** tab on the project (the API is already there
    and tested — nothing reads it yet).
@@ -78,14 +78,24 @@ repository has.
 
 ## Still on the interim Dexie layer
 
-23 files under `src/app/admin` and `src/components/admin` still call
-`useLiveQuery`: the whole of Money (fund, loans, cash), Website/Blog, Master
-Data, Company Settings, Users & Roles, the Dashboard, Customer Requests, the
-profit period's own page, and these pieces of screens that are otherwise
-moved: `DocumentsPanel`, `ProjectGalleryPanel`, `ProjectForm`'s amenity list,
-`ProjectSalesCard`'s website checklist, `AccountPicker`, `RevenueModals`,
-`PaymentVerifyPanel`, `ShareSaleModals`. The Customer Portal and the public
+Whole screens: the Dashboard, all of Money (fund, loans, cash), Website and
+Blog, Master Data, Company Settings, Users & Roles, and **Customer Requests**
+with the `PaymentVerifyPanel` inside it. The Customer Portal and the public
 site are entirely Dexie.
+
+Customer Requests is the one that is **not** a wiring job: `share_requests`,
+`customer_uploads` and `payment_submissions` have no Prisma models at all, so
+it needs a slice of its own — the portal inbox — which is also what the
+Investor Portal is waiting for.
+
+Nothing else is half-migrated any more. `ProjectForm`, `ProjectGalleryPanel`,
+`ProjectSalesCard`, `DocumentsPanel`, `AccountPicker` and `RevenueModals` are
+on the API; the period page is on `GET /revenue-periods/{id}`. The dead Dexie
+copies of the reserve / receipt / release dialogs (in `ShareSaleModals`) and of
+the day-sheet, loan, loss-cover and withdrawal dialogs (in `RevenueModals`)
+were deleted — `SaleModals.tsx` and the migrated screens had replaced them, and
+a second copy that still compiles is the kind a fix gets applied to for
+nothing. `RepayModal` stays on Dexie with the Loans screen that opens it.
 
 They show empty rather than wrong: their tables are in Postgres or not at all,
 and the Dexie copy has nothing in it.
@@ -166,6 +176,13 @@ stopped — stop the dev server first, generate, then start it again.
   and "Paid from account" pickers were taken out of the sales-team screens
   because partners and accounts did not exist — they do now, and putting them
   back is item 2 above.
+- **Uploaded files never get a public path.** `documents.storage_key` is read
+  but never put in a DTO; the bytes come from `GET /documents/{id}/file`, which
+  checks the *owning record's* permission (`document.service.ts`'s `MODULE_OF`
+  — a project's papers need `project`, a customer's need `share_sale`). A
+  delete removes the file for real while the row soft-deletes, so a hidden
+  identity document does not leave its bytes on the disk. `FILE_STORAGE_DIR`
+  says where they go; the tests point it at a temp folder.
 - **A declaration with no partners on file still works**, and must keep
   working: the owners' side falls back to one unattributed line, because a
   client starts with none. There is a test for it.
@@ -182,7 +199,12 @@ stopped — stop the dev server first, generate, then start it again.
    selling window belongs to the round, and these two are no longer on the
    form. The columns stay; decide whether anything still reads them once the
    public site moves.
-3. **Who may see a commission statement.** Today it is anybody with
+3. **The loss-cover record.** A loss period now says it is carried forward and
+   nothing more. Recording that the owners or a loan covered it needs
+   `loss_coverings` and `loans`, which come with the rest of Money — the old
+   screen had a dialog for it against the interim layer, and that dialog is
+   gone rather than left pointing at nothing.
+4. **Who may see a commission statement.** Today it is anybody with
    `sales_team: view`, which means a sales executive can read a colleague's.
    The plan leaves the door open to letting sales people log in and see only
    their own (§9); the `own` permission level and `requirePerm`'s `own_only`

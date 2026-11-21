@@ -11,7 +11,7 @@ import {
   POST as closePeriod,
 } from '@/app/api/v1/projects/[id]/revenue/periods/route';
 import {
-  GET as listAllocations,
+  GET as periodDetail,
   PATCH as movePeriod,
 } from '@/app/api/v1/revenue-periods/[id]/route';
 import { GET as getEarnings } from '@/app/api/v1/customers/[id]/earnings/route';
@@ -532,10 +532,77 @@ suite('revenue and profit sharing API', () => {
       expect(rows.length, table).toBeGreaterThan(0);
     }
 
-    const allocations = await listAllocations(
+    const response = await periodDetail(
       req('GET', `/api/v1/revenue-periods/${periodId}`, { token }),
       ctx(periodId),
     );
-    expect(((await allocations.json()) as { data: Json[] }).data).toHaveLength(2);
+    const detail = ((await response.json()) as {
+      data: {
+        period: Json;
+        project_name: string;
+        lines: { name: string; allocation: Json }[];
+        preview: unknown[];
+        heads: { head: string; amount: number }[];
+      };
+    }).data;
+
+    /* the customer's line and the owners' — and each one named, not just an id */
+    expect(detail.lines).toHaveLength(2);
+    expect(detail.lines.map((line) => line.name).sort()).toEqual(['Owners', 'Rahim Uddin']);
+    /* a declared period is history: it shows what happened, not a preview */
+    expect(detail.preview).toHaveLength(0);
+    expect(detail.project_name).toBe('Grand Palace Resort');
+    expect(detail.heads).toEqual([{ direction: 'income', head: 'Room rent', amount: 2_000_000 }]);
+  });
+
+  it('previews the same split before anybody approves, and lets an approval be taken back', async () => {
+    await setPolicy();
+    await entry({ entry_date: `${YEAR}-01-15`, direction: 'income', head: 'Room rent', amount: 2_000_000 });
+    /* 40 shares is 4% of the project, per the fixture's share-per-cent */
+    await holding('Rahim Uddin', '01711223344', 40, 40_000_000);
+    const closed = await close(Q1.start);
+    const periodId = closed.body.data.id as string;
+
+    async function read() {
+      const response = await periodDetail(
+        req('GET', `/api/v1/revenue-periods/${periodId}`, { token }),
+        ctx(periodId),
+      );
+      expect(response.status).toBe(200);
+      return ((await response.json()) as {
+        data: {
+          period: { status: string; declared: number; available: number };
+          lines: unknown[];
+          preview: { name: string; allocation: { ownership_pct: number; gross: number } }[];
+        };
+      }).data;
+    }
+
+    /*
+     * Nothing is written yet, so there are no lines — but the split is already
+     * shown, on the whole of what is available, because that is what a meeting
+     * decides against.
+     */
+    const before = await read();
+    expect(before.lines).toHaveLength(0);
+    expect(before.preview).toHaveLength(2);
+    const customerLine = before.preview.find((line) => line.name === 'Rahim Uddin');
+    expect(customerLine?.allocation.ownership_pct).toBeCloseTo(4, 3);
+    const previewTotal = before.preview.reduce((sum, line) => sum + line.allocation.gross, 0);
+    expect(previewTotal).toBeCloseTo(before.period.available, 2);
+
+    /* approved, then thought better of: back to closed, with the amount cleared */
+    expect((await move(periodId, { action: 'approve', declared: 500_000 })).response.status).toBe(200);
+    expect((await read()).period.status).toBe('approved');
+
+    const back = await move(periodId, { action: 'unapprove' });
+    expect(back.response.status).toBe(200);
+    const after = await read();
+    expect(after.period.status).toBe('closed');
+    expect(after.period.declared).toBe(0);
+
+    /* and the entries stayed locked: taking an approval back is not reopening */
+    const entries = await db.revenueEntry.findMany({ where: { period_id: periodId } });
+    expect(entries).toHaveLength(1);
   });
 });

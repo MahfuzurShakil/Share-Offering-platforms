@@ -45,7 +45,7 @@ export const ClosePeriodBody = z.object({
 });
 
 export const PeriodMoveBody = z.object({
-  action: z.enum(['approve', 'declare', 'reopen']),
+  action: z.enum(['approve', 'declare', 'reopen', 'unapprove']),
   /** approve: how much of what is available will be shared */
   declared: z.number().min(0).optional(),
   /** declare: the day ownership is read on; the period's last day by default */

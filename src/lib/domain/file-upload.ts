@@ -6,10 +6,10 @@
  * and two components each holding their own idea of "5 MB, PDF or image" is
  * how one of them quietly starts accepting something the other rejects.
  *
- * Phase A keeps the file itself in IndexedDB as a Blob so the demo can preview
- * it, which is the real reason for the ceiling: a browser database is not a
- * document store. Phase B moves files to S3-compatible storage and the limit
- * becomes a policy decision rather than a technical one.
+ * The ceiling itself is now a policy decision rather than a technical one:
+ * files go to `server/storage` (a disk today, a bucket later), not into a
+ * browser database. It is kept where it was because the client asked for 5 MB
+ * and because a limit agreed with them should be one line to change.
  */
 
 export const MAX_UPLOAD_BYTES = 5 * 1024 * 1024;
@@ -49,13 +49,24 @@ export function formatFileSize(bytes?: number | null): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-/** `null` when the file is fine, otherwise the sentence to show the user. */
-export function rejectUpload(file: File): string | null {
-  if (!(ACCEPTED_UPLOAD_TYPES as readonly string[]).includes(file.type)) {
-    return `"${file.name}" cannot be uploaded — only PDF, PNG, JPG, WEBP, MP4, WEBM and MOV are accepted`;
+/**
+ * `null` when the file is fine, otherwise the sentence to show the user.
+ *
+ * Takes the three facts rather than a `File`, so the **server** applies the
+ * same rule to an upload that never came from this drop zone — a mobile app,
+ * `scripts/demo`, or curl. A check in a browser is a courtesy, not a limit.
+ */
+export function rejectUploadOf(name: string, type: string, size: number): string | null {
+  if (!(ACCEPTED_UPLOAD_TYPES as readonly string[]).includes(type)) {
+    return `"${name}" cannot be uploaded — only PDF, PNG, JPG, WEBP, MP4, WEBM and MOV are accepted`;
   }
-  if (file.size > maxBytesFor(file.type)) {
-    return `"${file.name}" is ${formatFileSize(file.size)} — the limit is ${formatFileSize(maxBytesFor(file.type))}`;
+  if (size > maxBytesFor(type)) {
+    return `"${name}" is ${formatFileSize(size)} — the limit is ${formatFileSize(maxBytesFor(type))}`;
   }
   return null;
+}
+
+/** The same, for a file the browser already has in hand. */
+export function rejectUpload(file: File): string | null {
+  return rejectUploadOf(file.name, file.type, file.size);
 }

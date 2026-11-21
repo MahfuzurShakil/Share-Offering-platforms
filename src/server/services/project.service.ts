@@ -679,3 +679,72 @@ export async function deleteProject(principal: Permitted, id: string): Promise<v
     await tx.project.update({ where: { id }, data: { deleted_at: new Date() } });
   });
 }
+
+/* ------------------------------------------------------------------ *
+ * What the website needs before it looks right
+ * ------------------------------------------------------------------ */
+
+/** Public Portal v2.0 6.3 — one line of the checklist under the publish switch. */
+export interface WebsiteReadinessItem {
+  key: 'cover' | 'location' | 'gallery' | 'priced_unit' | 'brochure';
+  ok: boolean;
+  /** the brochure is nice to have; the rest are expected */
+  optional: boolean;
+}
+
+/**
+ * The checklist under the publish switch.
+ *
+ * Built from the same facts the website reads — a display picture, a location,
+ * at least one public gallery picture, a round with a price on it — so it can
+ * never say "ready" about something the site would leave blank. Warnings only:
+ * publishing is never blocked by it.
+ *
+ * What is priced here is the **share**, not a unit: this product sells rounds,
+ * so the check is that a round exists, is past draft, and has a price.
+ */
+export async function websiteReadiness(id: string): Promise<WebsiteReadinessItem[]> {
+  const project = await prisma.project.findFirst({
+    where: { id },
+    select: {
+      id: true,
+      location_summary: true,
+      cover_image_url: true,
+      cover_image_document_id: true,
+    },
+  });
+  if (!project) return [];
+
+  const [publicPictures, brochures, pricedRounds] = await Promise.all([
+    prisma.document.count({
+      where: {
+        entity_type: 'project',
+        entity_id: id,
+        is_public: true,
+        document_type: 'gallery_image',
+        mime_type: { startsWith: 'image/' },
+      },
+    }),
+    prisma.document.count({
+      where: { entity_type: 'project', entity_id: id, is_public: true, document_type: 'brochure' },
+    }),
+    prisma.shareOffering.count({
+      where: {
+        project_id: id,
+        price_per_share: { gt: 0 },
+        status: { notIn: ['draft', 'cancelled'] },
+      },
+    }),
+  ]);
+
+  /* a pasted URL counts as a cover, and so does an uploaded picture */
+  const hasCover = Boolean(project.cover_image_document_id ?? project.cover_image_url);
+
+  return [
+    { key: 'cover', ok: hasCover, optional: false },
+    { key: 'location', ok: Boolean(project.location_summary?.trim()), optional: false },
+    { key: 'gallery', ok: publicPictures > 0, optional: false },
+    { key: 'priced_unit', ok: pricedRounds > 0, optional: false },
+    { key: 'brochure', ok: brochures > 0, optional: true },
+  ];
+}

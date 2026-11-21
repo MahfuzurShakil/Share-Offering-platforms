@@ -1,7 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { CheckCircle2, Circle, ShoppingBag } from 'lucide-react';
 import { Badge } from '@/components/ui/Badge';
 import { Button } from '@/components/ui/Button';
@@ -15,9 +14,13 @@ import {
   projectSalesStatus,
 } from '@/lib/domain/project';
 import { messageOf } from '@/lib/api/client';
-import { projectKeys, projectsApi, type ApiProject } from '@/lib/api/projects';
-import { useApiMutation } from '@/lib/api/use-api';
-import { websiteReadiness, type WebsiteReadinessItem } from '@/lib/repositories/public/project.public.repository';
+import {
+  projectKeys,
+  projectsApi,
+  type ApiProject,
+  type WebsiteReadinessItem,
+} from '@/lib/api/projects';
+import { useApi, useApiMutation } from '@/lib/api/use-api';
 
 const MOVE_QUESTION: Record<ProjectSalesStatus, string> = {
   open: 'Share offerings can be opened on this project from now on.',
@@ -53,12 +56,9 @@ export function ProjectSalesCard({ project }: { project: ApiProject }) {
       projectsApi.update(project.id, patch),
     [projectKeys.all],
   );
-  /*
-   * The website checklist still reads the interim Dexie layer, so it is empty
-   * (and hidden) until the public-site reads move to Postgres with the
-   * share-sale slice — the offering it checks for a price on lives there.
-   */
-  const website = useLiveQuery(() => websiteReadiness(project.id), [project.id, project.updated_at]);
+  const website = useApi(projectKeys.websiteReadiness(project.id), (signal) =>
+    projectsApi.websiteReadiness(project.id, signal),
+  );
 
   const current = projectSalesStatus(project);
   const meta = PROJECT_SALES_STATUS_META[current];

@@ -144,6 +144,54 @@ export const api = {
   async del<T>(path: string, body?: unknown): Promise<T> {
     return (await request<T>('DELETE', path, { body })).data;
   },
+
+  /**
+   * An upload: the one request that is not JSON, because it carries a file.
+   *
+   * `fetch` sets the multipart boundary itself, so the content type must be
+   * left alone here — setting it by hand is how an upload arrives as a body
+   * the server cannot split apart.
+   */
+  async upload<T>(path: string, form: FormData): Promise<T> {
+    const response = await fetch(`${BASE}${path}`, {
+      method: 'POST',
+      body: form,
+      credentials: 'same-origin',
+    });
+    let payload: unknown;
+    try {
+      payload = await response.json();
+    } catch {
+      payload = null;
+    }
+    if (!response.ok) {
+      const envelope = payload as
+        | { error?: { code?: string; message?: string; fields?: ApiFieldErrors }; request_id?: string }
+        | null;
+      throw new ApiRequestError(
+        response.status,
+        envelope?.error?.code ?? 'server_error',
+        envelope?.error?.message ?? 'That file could not be uploaded.',
+        envelope?.error?.fields,
+        undefined,
+        envelope?.request_id ?? null,
+      );
+    }
+    return (payload as { data: T }).data;
+  },
+
+  /** A file's bytes, for the viewer and the download. Not the envelope. */
+  async blob(path: string, signal?: AbortSignal): Promise<Blob> {
+    const response = await fetch(`${BASE}${path}`, { credentials: 'same-origin', signal });
+    if (!response.ok) {
+      throw new ApiRequestError(
+        response.status,
+        response.status === 404 ? 'not_found' : 'server_error',
+        'That file could not be opened.',
+      );
+    }
+    return response.blob();
+  },
 };
 
 /** The field errors from a failed save, for a form to show beside its inputs. */

@@ -392,37 +392,6 @@ function unpriced<T extends PublicProjectCard>(card: T): T {
   return { ...card, price_from: null };
 }
 
-/** Public Portal v2.0 §6.3 — what a project needs before it looks right on the website. */
-export interface WebsiteReadinessItem {
-  key: 'cover' | 'location' | 'gallery' | 'priced_unit' | 'brochure';
-  ok: boolean;
-  /** the brochure is nice to have; the rest are expected */
-  optional: boolean;
-}
-
-/**
- * The checklist under the publish switch. Built from the same mapping the
- * site uses (cover, public gallery, available company-sold units), so it can
- * never say "ready" about something the website would leave out. Warnings
- * only — publishing is never blocked by it.
- */
-export async function websiteReadiness(projectId: string): Promise<WebsiteReadinessItem[]> {
-  const project = await db.projects.get(projectId);
-  if (!project) return [];
-  const loaded = await loadFor([project.id]);
-  const offerings = await db.share_offerings.toArray();
-  const docs = loaded.docsByProject.get(project.id) ?? [];
-  const publicDocs = docs.filter((d) => d.is_public);
-  return [
-    { key: 'cover', ok: coverFor(project, docs) !== null, optional: false },
-    { key: 'location', ok: !!project.location_summary?.trim(), optional: false },
-    { key: 'gallery', ok: publicDocs.some((d) => d.document_type === 'gallery_image' && isPicture(d)), optional: false },
-    // PHASE 1: what the website prices is the share, so the check is the round
-    { key: 'priced_unit', ok: offerings.some((o) => o.project_id === project.id && o.price_per_share > 0 && o.status !== 'draft' && o.status !== 'cancelled'), optional: false },
-    { key: 'brochure', ok: publicDocs.some((d) => d.document_type === 'brochure'), optional: true },
-  ];
-}
-
 export const publicProjectRepository = {
   /** v2.0 §3.4 — the listing. Featured first, then newest. */
   async list(filters: PublicProjectFilters = {}): Promise<PublicProjectCard[]> {

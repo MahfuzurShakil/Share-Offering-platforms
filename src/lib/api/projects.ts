@@ -136,6 +136,11 @@ export const projectsApi = {
   remove(id: string): Promise<void> {
     return api.del<void>(`/projects/${id}`);
   },
+
+  /** What the project still needs before the public site looks right. */
+  websiteReadiness(id: string, signal?: AbortSignal): Promise<WebsiteReadinessItem[]> {
+    return api.get<WebsiteReadinessItem[]>(`/projects/${id}/website-readiness`, undefined, signal);
+  },
 };
 
 /** The query keys, in one place so an invalidation cannot miss a screen. */
@@ -143,7 +148,16 @@ export const projectKeys = {
   all: ['projects'] as const,
   list: (query: ProjectQuery) => ['projects', 'list', query] as const,
   one: (id: string) => ['projects', 'one', id] as const,
+  websiteReadiness: (id: string) => ['projects', 'website-readiness', id] as const,
 };
+
+/** Public Portal v2.0 6.3 — one line of the checklist under the publish switch. */
+export interface WebsiteReadinessItem {
+  key: 'cover' | 'location' | 'gallery' | 'priced_unit' | 'brochure';
+  ok: boolean;
+  /** the brochure is nice to have; the rest are expected */
+  optional: boolean;
+}
 
 /* ------------------------------------------------------------------ *
  * The manager picker

@@ -1,8 +1,7 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { useLiveQuery } from 'dexie-react-hooks';
 import { Image as ImageIcon, Upload } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Card, CardHeader } from '@/components/ui/Card';
@@ -16,8 +15,9 @@ import {
   projectsApi,
   type ApiProject,
 } from '@/lib/api/projects';
+import { documentFileUrl, documentsApi } from '@/lib/api/documents';
+import { lookupKeys, lookupsApi } from '@/lib/api/lookups';
 import { useApi, useRefresh } from '@/lib/api/use-api';
-import { documentRepository, lookupRepository } from '@/lib/repositories';
 
 interface FormState {
   name: string;
@@ -125,23 +125,25 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
   const managers =
     useApi(assignableUserKeys.all, (signal) => assignableUsersApi.list(signal)) ?? [];
   const [amenities, setAmenities] = useState<string[]>(project?.amenities ?? []);
-  const [amenityOptions, setAmenityOptions] = useState<string[]>([]);
+  const amenityOptions = (
+    useApi(lookupKeys.category('amenity'), (signal) => lookupsApi.options('amenity', null, signal)) ??
+    []
+  ).map((row) => row.value);
   const [errors, setErrors] = useState<Record<string, string>>({});
   const [saving, setSaving] = useState(false);
   /** the display picture, uploaded rather than linked (client feedback 2026-10-11) */
   const [coverFile, setCoverFile] = useState<File | null>(null);
-  const currentCover = useLiveQuery(
-    () =>
-      project?.cover_image_document_id
-        ? documentRepository.getById(project.cover_image_document_id)
-        : Promise.resolve(undefined),
-    [project?.cover_image_document_id],
-  );
-  const coverPreview = useBlobUrl(coverFile ?? currentCover?.file_data ?? null);
-
-  useEffect(() => {
-    lookupRepository.options('amenity').then((rows) => setAmenityOptions(rows.map((r) => r.value)));
-  }, []);
+  /*
+   * The picture already on the project is served by the API behind its own
+   * permission check; a freshly picked file has not been uploaded yet, so that
+   * one is previewed from the browser's own copy.
+   */
+  const pickedPreview = useBlobUrl(coverFile);
+  const coverPreview =
+    pickedPreview ??
+    (project?.cover_image_document_id
+      ? documentFileUrl(project.cover_image_document_id)
+      : (project?.cover_image_url ?? null));
 
   const set = <K extends keyof FormState>(key: K, value: FormState[K]) =>
     setForm((f) => ({ ...f, [key]: value }));
@@ -185,25 +187,19 @@ export function ProjectForm({ project }: { project?: ApiProject }) {
         : await projectsApi.create(payload);
 
       /*
-       * The picture is still an interim Dexie document — file storage is S4 —
-       * so the file is kept there and only the reference to it goes to the
-       * project over the API.
+       * The picture is a document of the project like any other, so it is
+       * uploaded through the documents API and the project is then pointed at
+       * it. It is marked public because a display picture is, by definition,
+       * the one the website leads with.
        */
       if (coverFile) {
-        const doc = await documentRepository.create({
+        const doc = await documentsApi.upload({
           entity_type: 'project',
           entity_id: saved.id,
           document_type: 'gallery_image',
-          custom_type_name: null,
-          file_url: coverFile.name,
-          file_data: coverFile,
-          file_name: coverFile.name,
-          file_size: coverFile.size,
-          mime_type: coverFile.type,
           is_public: true,
-          uploaded_by: null,
-          uploaded_at: new Date().toISOString(),
           notes: 'Display picture, uploaded with the project',
+          file: coverFile,
         });
         await projectsApi.update(saved.id, {
           cover_image_document_id: doc.id,

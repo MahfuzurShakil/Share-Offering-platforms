@@ -1,30 +1,35 @@
 'use client';
 
 import { EyeOff, Globe } from 'lucide-react';
-import type { EntityType } from '@/lib/db/types';
-import { documentRepository } from '@/lib/repositories';
+import { documentKeys, documentsApi, type DocumentEntity } from '@/lib/api/documents';
+import { useApiMutation } from '@/lib/api/use-api';
 import { cn } from '@/lib/utils/cn';
 
 /**
- * Only these records have files the public website reads (project gallery,
- * brochure and plans; site progress photos; blog pictures). Elsewhere the
- * "public" flag would do nothing, so it is not offered.
+ * Only these records have files the public website reads (a project's gallery,
+ * brochure and plans; blog pictures). Elsewhere the "public" flag would do
+ * nothing, so it is not offered — and the service refuses to set it.
  */
-export const WEBSITE_ENTITIES: EntityType[] = ['project', 'site_progress_update', 'blog_post'];
+export const WEBSITE_ENTITIES: DocumentEntity[] = ['project', 'blog_post'];
 
 /**
  * One click puts a file on the website or takes it off (PUBLIC-WEBSITE-MASTER-PLAN
  * §10.2). Before this, `is_public` could only be chosen at upload time.
  */
 export function WebsiteToggle({ id, isPublic, className }: { id: string; isPublic: boolean; className?: string }) {
+  const toggle = useApiMutation(
+    (next: boolean) => documentsApi.setPublic(id, next),
+    [documentKeys.all],
+  );
   return (
     <button
       type="button"
       aria-pressed={isPublic}
+      disabled={toggle.isPending}
       title={isPublic ? 'Shown on the public website — click to hide it' : 'Internal only — click to show it on the public website'}
       onClick={(e) => {
         e.stopPropagation();
-        void documentRepository.setPublic(id, !isPublic);
+        toggle.mutate(!isPublic);
       }}
       className={cn(
         'inline-flex items-center gap-1 rounded-full border px-2.5 py-1 text-xs font-medium transition-colors',

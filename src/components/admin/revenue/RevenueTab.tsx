@@ -333,11 +333,12 @@ function PeriodRow({
   periodId?: string;
 }) {
   const [open, setOpen] = useState(false);
-  const allocations = useApi(
-    revenueKeys.allocations(periodId ?? ''),
-    (signal) => revenueApi.allocations(periodId!, signal),
+  const detail = useApi(
+    revenueKeys.period(periodId ?? ''),
+    (signal) => revenueApi.detail(periodId!, signal),
     { enabled: Boolean(periodId) && open },
   );
+  const allocations = detail?.lines.map((line) => line.allocation);
 
   return (
     <div className="px-5 py-4">
@@ -395,7 +396,7 @@ function PeriodRow({
                   {allocations.map((a) => (
                     <li key={a.id} className="flex justify-between gap-3 text-xs tabular-nums">
                       <span>
-                        {a.customer_name ?? 'The owners'}
+                        {a.customer_name ?? a.partner_name ?? 'The owners'}
                         <span className="text-ink-muted">
                           {' '}
                           · {a.ownership_pct}%

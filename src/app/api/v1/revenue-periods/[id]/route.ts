@@ -3,18 +3,25 @@ import { handler, noContent, ok, readJson } from '@/server/http/respond';
 import {
   approvePeriod,
   declarePeriod,
-  listAllocations,
+  periodDetail,
   reopenPeriod,
+  unapprovePeriod,
 } from '@/server/services/revenue.service';
 import { PeriodMoveBody } from '../../projects/[id]/revenue/schema';
 
 type Context = { params: Promise<{ id: string }> };
 
-/** Who got what out of a declared period. */
+/**
+ * One period, whole: its frozen statement, what each head contributed, and who
+ * got what — or, before it is declared, who *would*.
+ *
+ * One read rather than four, because the page shows all of it at once and a
+ * preview assembled from separate calls can disagree with itself.
+ */
 export const GET = handler<Context>(async (request, { params }) => {
   const principal = await requirePerm(request, 'share_sale', 'view');
   const { id } = await params;
-  return ok(await listAllocations(principal, id));
+  return ok(await periodDetail(principal, id));
 });
 
 /**
@@ -34,6 +41,7 @@ export const PATCH = handler<Context>(async (request, { params }) => {
     await reopenPeriod(principal, id);
     return noContent();
   }
+  if (body.action === 'unapprove') return ok(await unapprovePeriod(principal, id));
   if (body.action === 'approve') {
     return ok(await approvePeriod(principal, id, body.declared ?? 0));
   }
