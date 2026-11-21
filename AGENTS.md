@@ -74,9 +74,15 @@ there before writing it again.
 `src/lib/db/database.ts` is still Dexie/IndexedDB — one `version(1)` holding
 the 40 tables this product keeps, as scaffolding so the UI runs while the
 server is built. It is not the data layer and gets no new tables: schema
-changes go into `prisma/schema.prisma`. There is also **no access control at
-all** right now (the prototype's access code was dropped and real auth is the
-next batch), so nothing goes on a public or staging host until it lands.
+changes go into `prisma/schema.prisma`. What is left on it is the Dashboard,
+all of Money, Website and Blog, Master Data, Company Settings, Users & Roles,
+the Customer Portal and the public site; those screens open and show nothing,
+because their data is in Postgres or not yet anywhere.
+
+Access control **has** landed (argon2id passwords, mobile OTP, opaque
+sessions, server-enforced RBAC from `role_permissions`), and a test asserts
+that every route under `src/app/api/v1` checks a permission. What still keeps
+this off a public host is the half-moved data layer, not the door.
 
 ## Working rules
 

@@ -912,6 +912,23 @@ export async function recordPayment(
   saleId: string,
   input: PaymentInput,
 ): Promise<ShareSaleDto> {
+  return (await recordPaymentReturning(principal, saleId, input)).sale;
+}
+
+/**
+ * The same, saying which receipt it wrote.
+ *
+ * A payment submission has to point at the receipt its confirmation created —
+ * that link is what lets the customer see "confirmed, receipt SRC-2026-0004"
+ * — and guessing it afterwards from the newest row on the purchase would be
+ * wrong the moment two people confirm at once.
+ */
+export async function recordPaymentReturning(
+  principal: StaffPrincipal,
+  saleId: string,
+  input: PaymentInput,
+): Promise<{ sale: ShareSaleDto; payment_id: string }> {
+  let paymentId = '';
   await withTx(async (tx: Tx) => {
     const sale = await loadSale(tx, saleId);
     assertWithinScope(principal, sale.project_id);
@@ -944,7 +961,8 @@ export async function recordPayment(
     const principalPaid = allocations.reduce((t, a) => t + a.principal, 0);
     const lateFee = allocations.reduce((t, a) => t + a.late_fee, 0);
 
-    await tx.sharePayment.create({
+    const created = await tx.sharePayment.create({
+      select: { id: true },
       data: {
         code: await nextCode(tx, 'share_payment'),
         sale_id: saleId,
@@ -968,6 +986,7 @@ export async function recordPayment(
         },
       },
     });
+    paymentId = created.id;
 
     /* paid off? the purchase says so itself, rather than a job deciding later */
     const after = await viewOf(tx, sale);
@@ -979,7 +998,7 @@ export async function recordPayment(
     }
   });
 
-  return getSale(principal, saleId);
+  return { sale: await getSale(principal, saleId), payment_id: paymentId };
 }
 
 /* ------------------------------------------------------------------ *

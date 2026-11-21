@@ -1,6 +1,6 @@
 # Next session — where to pick up
 
-Written 21 Nov 2026, at commit `0187d7b` + the documents slice. Working
+Written 21 Nov 2026, at commit `ba622cf` + the portal inbox. Working
 tree clean, pushed to `origin`
 (github.com/MahfuzurShakil/Share-Offering-platforms). `prototype` is the other
 remote: it is where Phase 2 reads Land and Construction back out of, never
@@ -27,9 +27,10 @@ the person who sold it is paid their commission.
 | **Sales team & commission** | A free tree of any depth with a **history**, so commission is read from the tree as it was on the sale date. Plans say what is earned and in what stages; the payment ledger releases each stage with nothing marked by hand; Accounts approves; a payout pays a member everything approved at once and can never be edited. |
 | **Money (part)** | Accounts (`ACC-001`) for a payout or a withdrawal to name, and partners (`PTR-001`) — the company's, or one project's own investor who takes their share of it first. A percentage changes through a **dated** change, so a declaration made in June is not re-split in October, and `GET /projects/{id}/cap-table` puts customers and owners on one page as of any date. |
 | **Documents** | Every record's papers through one panel: uploaded to `server/storage` (a disk now, a bucket later), served by `GET /documents/{id}/file` behind the **owning record's** permission, never by a public path. A project's gallery and display picture, and the website checklist, read it. |
-| **Checks** | 480 tests in 25 files, lint and types clean, production build of 68 pages. |
+| **Portal inbox** | The three queues the office works through, and the one half of the product where the customer writes first: a request to buy into a round (`SRQ-001`), a paper sent in for checking, and "I paid at the bank, here is the slip" (`PSB-001`). None of them is a record until somebody acts on it — a request holds no shares until `reserveShares` is called, and a confirmed slip writes a real receipt **dated the day on the slip**, not the day Accounts got to it. |
+| **Checks** | 511 tests in 26 files, lint and types clean, production build of 68 pages. |
 
-14 services, 66 API route files, and the screens for all of the above read them
+15 services, 73 API route files, and the screens for all of the above read them
 through `src/lib/api/*` — except the Money slice, which has no screens yet (below).
 
 ### The whole-flow test
@@ -46,6 +47,13 @@ repository has.
 
 ## Start here
 
+0. **The Customer Portal** (`src/app/(customer)/*`). It is the other side of
+   the inbox, and the inbox is now built: a request posts to
+   `POST /share-requests`, a paper to `POST /customer-uploads` with
+   `source=customer`, a slip to `POST /payment-submissions`. Those three
+   routes are gated on staff rights today, with a comment at each saying so —
+   the portal is what makes them take a customer session instead, and that is
+   the one real decision left in them.
 1. **The rest of Money** (`finance_expense`). Accounts and partners landed in
    the last commit; what is left is the money moving: `fund_receipts` (a
    partner's capital or a loan coming in), `fund_allocations` (the company pool
@@ -83,12 +91,8 @@ Blog, Master Data, Company Settings, Users & Roles, and **Customer Requests**
 with the `PaymentVerifyPanel` inside it. The Customer Portal and the public
 site are entirely Dexie.
 
-Customer Requests is the one that is **not** a wiring job: `share_requests`,
-`customer_uploads` and `payment_submissions` have no Prisma models at all, so
-it needs a slice of its own — the portal inbox — which is also what the
-Investor Portal is waiting for.
-
-Nothing else is half-migrated any more. `ProjectForm`, `ProjectGalleryPanel`,
+Nothing else is half-migrated any more. **Customer Requests** moved with the
+portal inbox slice, so every Share Sale screen is on Postgres. `ProjectForm`, `ProjectGalleryPanel`,
 `ProjectSalesCard`, `DocumentsPanel`, `AccountPicker` and `RevenueModals` are
 on the API; the period page is on `GET /revenue-periods/{id}`. The dead Dexie
 copies of the reserve / receipt / release dialogs (in `ShareSaleModals`) and of
@@ -183,6 +187,13 @@ stopped — stop the dev server first, generate, then start it again.
   delete removes the file for real while the row soft-deletes, so a hidden
   identity document does not leave its bytes on the disk. `FILE_STORAGE_DIR`
   says where they go; the tests point it at a temp folder.
+- **A confirmed slip is dated the slip, not today.** `confirmSubmission` calls
+  `recordPaymentReturning` with `paid_on` from the submission, so the schedule
+  and the late fees see the money when it arrived. The receipt's `method` is
+  mapped to the ledger's own enum (`pay_order` → `cheque`), with the exact one
+  kept in `method_detail` — a slip's vocabulary is finer than the ledger's.
+  `recordPayment` is now a wrapper around `recordPaymentReturning`, which says
+  which receipt it wrote; that link is what the submission points at.
 - **A declaration with no partners on file still works**, and must keep
   working: the owners' side falls back to one unattributed line, because a
   client starts with none. There is a test for it.

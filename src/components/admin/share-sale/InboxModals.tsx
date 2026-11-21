@@ -1,256 +1,283 @@
 'use client';
 
 import { useState } from 'react';
-import { IdCard, MessageSquareText, Ticket } from 'lucide-react';
+import { MessageSquareText, Ticket, X } from 'lucide-react';
 import { Button } from '@/components/ui/Button';
 import { Field, SelectInput, TextArea, TextInput } from '@/components/ui/Field';
 import { Modal } from '@/components/ui/Modal';
-import { useSession } from '@/lib/auth/session';
-import type { Customer, CustomerUpload, ShareOffering, ShareRequest } from '@/lib/db/types';
-import { SHARE_DOC_KINDS, SHARE_DOC_META } from '@/lib/domain/share-documents';
-import { FREQUENCY_LABEL } from '@/lib/domain/share-sale';
-import { customerRepository, customerUploadRepository, shareRequestRepository } from '@/lib/repositories';
-import { formatBdt, todayLocal } from '@/lib/utils/format';
-import { ErrorNote, useAction } from './ShareSaleModals';
+import { messageOf } from '@/lib/api/client';
+import {
+  inboxKeys,
+  requestsApi,
+  uploadsApi,
+  type ApiCustomerUpload,
+  type ApiShareRequest,
+} from '@/lib/api/inbox';
+import { shareOfferingKeys } from '@/lib/api/share-offerings';
+import { shareSaleKeys } from '@/lib/api/share-sales';
+import { useApiMutation } from '@/lib/api/use-api';
+import { formatBdt } from '@/lib/utils/format';
+import { ErrorNote } from './ShareSaleModals';
 
-/** "NID / passport copy" … — one label per paper, from the shared checklist. */
-export const UPLOAD_KIND_LABEL = Object.fromEntries(SHARE_DOC_KINDS.map((k) => [k, SHARE_DOC_META[k].label])) as Record<CustomerUpload['kind'], string>;
+export { UPLOAD_KIND_LABEL } from '@/lib/api/inbox';
 
-/** Opens a customer's file in a new tab. */
-export async function openUpload(id: string) {
-  const blob = await customerUploadRepository.file(id);
-  if (!blob) return;
-  const url = URL.createObjectURL(blob);
-  window.open(url, '_blank', 'noopener');
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+/**
+ * The three dialogs of the inbox: turning a request into a reservation,
+ * noting what the office did about it, and sending a paper back.
+ *
+ * Each one writes through the API and then tells the queues, the offerings and
+ * the purchases to refresh — a reservation changes all three at once, which is
+ * why the keys are listed rather than left to the screen.
+ */
+
+/** Opens an uploaded paper in a new tab, behind its own permission check. */
+export function openUpload(id: string) {
+  window.open(`/api/v1/customer-uploads/${id}/file`, '_blank', 'noopener');
 }
 
 /**
- * Reserves what a customer asked for on the Customer Portal. Shares and plan
- * start from the request; the office changes them to what was agreed on the call.
+ * The step that holds shares.
+ *
+ * The office may hold fewer than was asked for, and sets the plan — what was
+ * typed on a phone is a starting point, not an agreement. The round's own
+ * limits are checked by the server, so what comes back as a field error is
+ * shown where it belongs.
  */
-export function ReserveFromRequestModal({ request, offering, available, customerName, onClose }: { request: ShareRequest; offering: ShareOffering; available: number; customerName: string; onClose: () => void }) {
-  const { userId } = useSession();
+export function ReserveFromRequestModal({
+  request,
+  onClose,
+}: {
+  request: ApiShareRequest;
+  onClose: () => void;
+}) {
   const [shares, setShares] = useState(String(request.shares));
-  const [plan, setPlan] = useState(String(Math.min(request.installments, offering.max_installments)));
-  const [downPct, setDownPct] = useState(String(request.installments === 0 ? 100 : offering.min_down_payment_pct));
-  const { error, busy, run } = useAction();
+  const [downPct, setDownPct] = useState('20');
+  const [installments, setInstallments] = useState(String(request.installments));
+  const [error, setError] = useState('');
+
+  const reserve = useApiMutation(
+    (input: { shares: number; down_payment_pct: number; installment_count: number }) =>
+      requestsApi.reserve(request.id, input),
+    [inboxKeys.all, shareOfferingKeys.all, shareSaleKeys.all],
+  );
+
   const n = Number(shares) || 0;
-  const total = n * offering.price_per_share;
+  const total = n * request.price_per_share;
   const down = Math.round((total * (Number(downPct) || 0)) / 100);
-  const inst = Number(plan) || 0;
+  const count = Number(installments) || 0;
+
+  async function save() {
+    setError('');
+    try {
+      await reserve.mutateAsync({
+        shares: n,
+        down_payment_pct: Number(downPct),
+        installment_count: count,
+      });
+      onClose();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
 
   return (
     <Modal
       open
-      title="Reserve the requested shares"
-      subtitle={`${request.code} · ${customerName} · ${available} shares left in ${offering.code}`}
+      title="Reserve from this request"
+      subtitle={`${request.code} · ${request.name} · ${request.offering_code}`}
       icon={Ticket}
-      size="md"
       onClose={onClose}
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} viewSafe disabled={reserve.isPending}>
             Cancel
           </Button>
-          <Button disabled={busy} onClick={() => run(() => shareRequestRepository.reserve(request.id, { shares: n, down_payment_pct: Number(downPct), installment_count: inst }, userId), onClose)}>
-            Reserve {n} share{n === 1 ? '' : 's'}
+          <Button onClick={save} disabled={reserve.isPending}>
+            {reserve.isPending ? 'Holding…' : `Hold ${n || ''} share${n === 1 ? '' : 's'}`}
           </Button>
         </>
       }
     >
-      {request.note && (
-        <p className="mb-4 rounded-xl bg-slate-50 px-4 py-3 text-sm text-ink">
-          <span className="text-ink-muted">Customer wrote:</span> “{request.note}”
-        </p>
-      )}
       <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Shares" hint={`${offering.min_shares}–${Math.min(offering.max_shares, available)}`}>
-          <TextInput inputMode="numeric" value={shares} onChange={(e) => setShares(e.target.value.replace(/\D/g, ''))} />
+        {/* what is left of the round is the server's to judge, and it says so */}
+        <Field label="Shares" required hint={`${request.shares} asked for`}>
+          <TextInput
+            type="number"
+            min={1}
+            value={shares}
+            onChange={(e) => setShares(e.target.value)}
+          />
         </Field>
-        <Field label="Down payment %" hint={`at least ${offering.min_down_payment_pct}%`}>
-          <TextInput inputMode="decimal" value={downPct} onChange={(e) => setDownPct(e.target.value.replace(/[^\d.]/g, ''))} />
+        <Field label="Down payment (%)" required>
+          <TextInput
+            type="number"
+            min={0}
+            max={100}
+            value={downPct}
+            onChange={(e) => setDownPct(e.target.value)}
+          />
         </Field>
-        <Field label="Installments" hint={`up to ${offering.max_installments}, ${FREQUENCY_LABEL[offering.installment_frequency].toLowerCase()}`}>
-          <SelectInput value={plan} onChange={(e) => setPlan(e.target.value)}>
-            {Array.from({ length: offering.max_installments + 1 }, (_, k) => (
-              <option key={k} value={k}>
-                {k === 0 ? 'None — pay in full' : k}
-              </option>
-            ))}
-          </SelectInput>
+        <Field label="Installments" required hint="0 = paid in full">
+          <TextInput
+            type="number"
+            min={0}
+            value={installments}
+            onChange={(e) => setInstallments(e.target.value)}
+          />
         </Field>
       </div>
-      <p className="mt-4 text-sm text-ink-muted tabular-nums">
-        Total <span className="font-semibold text-ink">{formatBdt(total)}</span> · down payment {formatBdt(down)}
-        {inst > 0 && ` · ${inst} × ${formatBdt(Math.round((total - down) / inst))}`}
+
+      <p className="mt-4 rounded-xl border border-hairline bg-canvas p-3 text-sm text-ink">
+        {formatBdt(total)} for {n} share{n === 1 ? '' : 's'}
+        <span className="mt-1 block text-xs text-ink-muted">
+          {formatBdt(down)} down
+          {count > 0 ? `, then ${count} × ${formatBdt(Math.round((total - down) / count))}` : ' — the whole price at signing'}
+        </span>
       </p>
-      <p className="mt-1 text-xs text-ink-muted">The shares are held for {offering.hold_days} days while the agreement is prepared. The customer sees “Shares reserved for you”.</p>
+
+      {request.note && (
+        <p className="mt-3 text-xs text-ink-muted italic">“{request.note}”</p>
+      )}
+
       <ErrorNote error={error} />
     </Modal>
   );
 }
 
-/** Notes a call to the customer, or turns the request down; the text is shown on the portal. */
-export function RequestNoteModal({ request, kind, onClose }: { request: ShareRequest; kind: 'contacted' | 'decline'; onClose: () => void }) {
-  const [note, setNote] = useState(request.office_note ?? '');
-  const { error, busy, run } = useAction();
-  const decline = kind === 'decline';
+/** A note about the call, or the reason the request was declined. */
+export function RequestNoteModal({
+  request,
+  kind,
+  onClose,
+}: {
+  request: ApiShareRequest;
+  kind: 'contacted' | 'decline';
+  onClose: () => void;
+}) {
+  const [note, setNote] = useState('');
+  const [error, setError] = useState('');
+  const move = useApiMutation(
+    (input: { action: 'contacted' | 'declined'; note: string }) =>
+      requestsApi.move(request.id, input.action, input.note || null),
+    [inboxKeys.all],
+  );
+
+  const declining = kind === 'decline';
+
+  async function save() {
+    setError('');
+    try {
+      await move.mutateAsync({ action: declining ? 'declined' : 'contacted', note: note.trim() });
+      onClose();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
   return (
     <Modal
       open
-      title={decline ? 'Decline this request' : 'Mark as contacted'}
-      subtitle={`${request.code} · ${request.shares} shares`}
-      tone={decline ? 'danger' : undefined}
-      icon={decline ? undefined : MessageSquareText}
-      size="sm"
+      title={declining ? 'Decline this request' : 'Note the call'}
+      subtitle={`${request.code} · ${request.name}`}
+      icon={declining ? X : MessageSquareText}
       onClose={onClose}
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} viewSafe disabled={move.isPending}>
             Cancel
           </Button>
           <Button
-            variant={decline ? 'danger' : 'primary'}
-            disabled={busy}
-            onClick={() => run(() => (decline ? shareRequestRepository.decline(request.id, note) : shareRequestRepository.markContacted(request.id, note)), onClose)}
+            variant={declining ? 'danger' : 'primary'}
+            onClick={save}
+            disabled={move.isPending}
           >
-            {decline ? 'Decline request' : 'Save'}
+            {move.isPending ? 'Saving…' : declining ? 'Decline' : 'Save note'}
           </Button>
         </>
       }
     >
-      <Field label={decline ? 'Reason (the customer sees this)' : 'Note for the customer (optional)'} required={decline}>
-        <TextArea
-          rows={3}
-          value={note}
-          onChange={(e) => setNote(e.target.value)}
-          placeholder={decline ? 'e.g. The round is fully taken; we will tell you when Round 2 opens' : 'e.g. Spoke on the phone — agreement meeting on Sunday 11am'}
-        />
+      <Field
+        label={declining ? 'Why' : 'What was said'}
+        hint={
+          declining
+            ? 'The customer is told this, so write it for them.'
+            : 'For whoever picks this up next.'
+        }
+      >
+        <TextArea value={note} onChange={(e) => setNote(e.target.value)} />
       </Field>
       <ErrorNote error={error} />
     </Modal>
   );
 }
 
-/** Turns an uploaded file down; the customer is asked to send a new copy. */
-export function RejectUploadModal({ upload, onClose }: { upload: CustomerUpload; onClose: () => void }) {
-  const [note, setNote] = useState('');
-  const { error, busy, run } = useAction();
-  return (
-    <Modal
-      open
-      title="Do not accept this file"
-      subtitle={`${upload.title} · ${upload.file_name}`}
-      tone="danger"
-      size="sm"
-      onClose={onClose}
-      footer={
-        <>
-          <Button variant="outline" onClick={onClose}>
-            Cancel
-          </Button>
-          <Button variant="danger" disabled={busy} onClick={() => run(() => customerUploadRepository.reject(upload.id, note), onClose)}>
-            Send back
-          </Button>
-        </>
-      }
-    >
-      <Field label="What is wrong (the customer sees this)" required>
-        <TextArea rows={3} value={note} onChange={(e) => setNote(e.target.value)} placeholder="e.g. The NID copy is blurred — please upload a clear scan of both sides" />
-      </Field>
-      <ErrorNote error={error} />
-    </Modal>
+/** Sending a paper back. The reason is what the customer reads. */
+export function RejectUploadModal({
+  upload,
+  onClose,
+}: {
+  upload: ApiCustomerUpload;
+  onClose: () => void;
+}) {
+  const [reason, setReason] = useState('');
+  const [error, setError] = useState('');
+  const reject = useApiMutation(
+    (note: string) => uploadsApi.reject(upload.id, note),
+    [inboxKeys.all],
   );
-}
 
-/** The investor details the Customer Portal profile shows: KYC, nominee and payout bank. */
-export function InvestorDetailsModal({ customer, onClose }: { customer: Customer; onClose: () => void }) {
-  const [f, setF] = useState({
-    email: customer.email ?? '',
-    address: customer.address ?? '',
-    nid: customer.nid ?? '',
-    tin: customer.tin ?? '',
-    date_of_birth: customer.date_of_birth ?? '',
-    kyc_verified_on: customer.kyc_verified_on ?? '',
-    nominee_name: customer.nominee_name ?? '',
-    nominee_relation: customer.nominee_relation ?? '',
-    nominee_phone: customer.nominee_phone ?? '',
-    bank_name: customer.bank_name ?? '',
-    bank_branch: customer.bank_branch ?? '',
-    bank_account: customer.bank_account ?? '',
-  });
-  const { error, busy, run } = useAction();
-  const set = (k: keyof typeof f) => (e: { target: { value: string } }) => setF((x) => ({ ...x, [k]: e.target.value }));
-  const clean = Object.fromEntries(Object.entries(f).map(([k, v]) => [k, v.trim() || null]));
+  const REASONS = [
+    'The picture is too blurred to read',
+    'The page with the account number is missing',
+    'This is not the document asked for',
+    'It has expired',
+  ];
+
+  async function save() {
+    setError('');
+    if (!reason.trim()) {
+      setError('Say why, so the customer knows what to send instead.');
+      return;
+    }
+    try {
+      await reject.mutateAsync(reason.trim());
+      onClose();
+    } catch (e) {
+      setError(messageOf(e));
+    }
+  }
+
   return (
     <Modal
       open
-      title="Investor details"
-      subtitle={`${customer.name} · ${customer.code} — shown on their Customer Portal profile`}
-      icon={IdCard}
-      size="lg"
+      title="Send this back"
+      subtitle={`${upload.title} · ${upload.customer_name}`}
+      icon={X}
       onClose={onClose}
       footer={
         <>
-          <Button variant="outline" onClick={onClose}>
+          <Button variant="outline" onClick={onClose} viewSafe disabled={reject.isPending}>
             Cancel
           </Button>
-          <Button disabled={busy} onClick={() => run(() => customerRepository.update(customer.id, clean), onClose)}>
-            Save details
+          <Button variant="danger" onClick={save} disabled={reject.isPending}>
+            {reject.isPending ? 'Sending…' : 'Send back'}
           </Button>
         </>
       }
     >
-      <div className="grid gap-4 sm:grid-cols-2">
-        <Field label="Email">
-          <TextInput type="email" value={f.email} onChange={set('email')} />
-        </Field>
-        <Field label="Date of birth">
-          <TextInput type="date" value={f.date_of_birth} onChange={set('date_of_birth')} />
-        </Field>
-        <Field label="Address" className="sm:col-span-2">
-          <TextInput value={f.address} onChange={set('address')} />
-        </Field>
-        <Field label="NID / passport no.">
-          <TextInput value={f.nid} onChange={set('nid')} />
-        </Field>
-        <Field label="TIN">
-          <TextInput value={f.tin} onChange={set('tin')} />
-        </Field>
-        <Field label="KYC checked on" hint="leave empty until the documents are checked">
-          <div className="flex gap-2">
-            <TextInput type="date" value={f.kyc_verified_on} onChange={set('kyc_verified_on')} />
-            {!f.kyc_verified_on && (
-              <Button variant="outline" onClick={() => setF((x) => ({ ...x, kyc_verified_on: todayLocal() }))}>
-                Today
-              </Button>
-            )}
-          </div>
-        </Field>
-      </div>
-      <p className="mt-6 mb-3 text-xs font-semibold tracking-wide text-ink-muted uppercase">Nominee</p>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Name">
-          <TextInput value={f.nominee_name} onChange={set('nominee_name')} />
-        </Field>
-        <Field label="Relation">
-          <TextInput value={f.nominee_relation} onChange={set('nominee_relation')} placeholder="e.g. Spouse" />
-        </Field>
-        <Field label="Mobile">
-          <TextInput value={f.nominee_phone} onChange={set('nominee_phone')} />
-        </Field>
-      </div>
-      <p className="mt-6 mb-3 text-xs font-semibold tracking-wide text-ink-muted uppercase">Bank account for payouts</p>
-      <div className="grid gap-4 sm:grid-cols-3">
-        <Field label="Bank">
-          <TextInput value={f.bank_name} onChange={set('bank_name')} />
-        </Field>
-        <Field label="Branch">
-          <TextInput value={f.bank_branch} onChange={set('bank_branch')} />
-        </Field>
-        <Field label="Account no.">
-          <TextInput value={f.bank_account} onChange={set('bank_account')} />
+      <Field label="Pick a reason, or write one">
+        <SelectInput value="" onChange={(e) => e.target.value && setReason(e.target.value)}>
+          <option value="">Choose…</option>
+          {REASONS.map((r) => (
+            <option key={r} value={r}>
+              {r}
+            </option>
+          ))}
+        </SelectInput>
+      </Field>
+      <div className="mt-3">
+        <Field label="What the customer is told" required>
+          <TextArea value={reason} onChange={(e) => setReason(e.target.value)} />
         </Field>
       </div>
       <ErrorNote error={error} />

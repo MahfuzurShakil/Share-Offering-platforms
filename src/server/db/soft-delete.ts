@@ -24,6 +24,15 @@ export const SOFT_DELETE_MODELS = new Set([
   'RevenueEntry',
   'RevenuePeriod',
   'ProfitWithdrawal',
+  /*
+   * The portal inbox. All three are what somebody *said*, not what the company
+   * booked: a request, a paper, a claim about a deposit. A confirmed
+   * submission points at a receipt, and hiding the claim leaves that receipt
+   * exactly where it was — which is the right way round.
+   */
+  'ShareRequest',
+  'CustomerUpload',
+  'PaymentSubmission',
   'OrgMember',
   'BankAccount',
   'Partner',

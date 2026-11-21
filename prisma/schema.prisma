@@ -490,6 +490,7 @@ model Project {
   leads              Lead[]
   commission_plans   CommissionPlan[]
   partners           Partner[]
+  share_requests     ShareRequest[]
 
   @@index([status])
   @@index([sales_status])
@@ -694,6 +695,9 @@ model Customer {
   sales       ShareSale[]
   allocations ProfitAllocation[]
   withdrawals ProfitWithdrawal[]
+  requests    ShareRequest[]
+  uploads     CustomerUpload[]
+  submissions PaymentSubmission[]
 
   @@index([name])
   @@index([created_at])
@@ -783,6 +787,7 @@ model ShareOffering {
   project          Project          @relation(fields: [project_id], references: [id])
   sales            ShareSale[]
   commission_plans CommissionPlan[]
+  requests         ShareRequest[]
 
   @@unique([project_id, round_no])
   @@index([project_id, status])
@@ -852,15 +857,18 @@ model ShareSale {
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
 
-  offering         ShareOffering      @relation(fields: [offering_id], references: [id])
-  project          Project            @relation(fields: [project_id], references: [id])
-  customer         Customer           @relation(fields: [customer_id], references: [id])
+  offering         ShareOffering       @relation(fields: [offering_id], references: [id])
+  project          Project             @relation(fields: [project_id], references: [id])
+  customer         Customer            @relation(fields: [customer_id], references: [id])
   installments     ShareInstallment[]
   payments         SharePayment[]
   /// who sold it (plan §6) — the column was already here, waiting for the
   /// organisation to exist for it to point at
-  sold_by          OrgMember?         @relation(fields: [sold_by_member_id], references: [id])
+  sold_by          OrgMember?          @relation(fields: [sold_by_member_id], references: [id])
   commission_lines CommissionLine[]
+  requests         ShareRequest[]
+  uploads          CustomerUpload[]
+  submissions      PaymentSubmission[]
 
   @@index([offering_id, status])
   @@index([project_id, status])
@@ -950,6 +958,7 @@ model SharePayment {
   reverses    SharePayment?            @relation("payment_reversal", fields: [reverses_payment_id], references: [id])
   reversed_by SharePayment[]           @relation("payment_reversal")
   allocations SharePaymentAllocation[]
+  submissions PaymentSubmission[]
 
   @@index([sale_id, paid_on])
   @@index([paid_on])
@@ -1628,6 +1637,8 @@ model BankAccount {
   created_by String?   @db.Uuid
   deleted_at DateTime? @db.Timestamptz
 
+  submissions PaymentSubmission[]
+
   @@index([is_active])
   @@map("bank_accounts")
 }
@@ -1692,4 +1703,223 @@ model PartnerShareHistory {
 
   @@index([partner_id, effective_from])
   @@map("partner_share_history")
+}
+
+/**
+ * ------------------------------------------------------------------ *
+ * The portal inbox — what customers and visitors send in
+ * ------------------------------------------------------------------ *
+ * Three queues the office works through, and the one half of the product
+ * where the *customer* writes first: a request to buy into a round, a paper
+ * sent in for checking, and "I paid at the bank, here is the slip".
+ * None of them is a record of anything until the office acts on it. A request
+ * holds no shares until somebody reserves them; an upload is on file but not
+ * accepted; and a submission is not a payment — the payment is written when
+ * Accounts confirms it against the bank, dated the day on the slip
+ * (SHARE-SALE-FEEDBACK-PLAN.md part C). That separation is the whole point of
+ * these tables: without them a customer's claim and the company's books would
+ * be the same row.
+ */
+
+/// A request is a claim on nothing until the office reserves the shares
+/// (PROJECT-SHARE-SALE-PLAN.md §4 step 3); it then points at the reservation.
+enum ShareRequestStatus {
+  new
+  contacted
+  reserved
+  declined
+  /// the customer changed their mind before the office got to it
+  withdrawn
+}
+
+/// Where a request came from: a signed-in investor, or the public site.
+enum ShareRequestSource {
+  portal
+  website
+}
+
+/// One customer's or visitor's request to buy into an open round.
+model ShareRequest {
+  id          String  @id @default(uuid(7)) @db.Uuid
+  code        String  @unique @db.VarChar(40)
+  offering_id String  @db.Uuid
+  /// denormalised from the offering, as on a purchase: every report is per project
+  project_id  String  @db.Uuid
+  /// null for a website visitor — there is no customer until the office makes one
+  customer_id String? @db.Uuid
+
+  source ShareRequestSource @default(portal)
+
+  /// a visitor's details as typed, kept only until a customer is made from them
+  prospect_name  String? @db.VarChar(200)
+  prospect_phone String? @db.VarChar(20)
+  prospect_email String? @db.VarChar(200)
+
+  shares       Int
+  installments Int     @default(0)
+  note         String?
+
+  requested_at DateTime           @default(now()) @db.Timestamptz
+  status       ShareRequestStatus @default(new)
+  /// the reservation this request became
+  sale_id      String?            @db.Uuid
+  /// what the office told the customer, or noted while working it
+  office_note  String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  offering ShareOffering @relation(fields: [offering_id], references: [id])
+  project  Project       @relation(fields: [project_id], references: [id])
+  customer Customer?     @relation(fields: [customer_id], references: [id])
+  sale     ShareSale?    @relation(fields: [sale_id], references: [id])
+
+  @@index([status, requested_at])
+  @@index([offering_id])
+  @@index([customer_id])
+  @@map("share_requests")
+}
+
+/// What a customer's paper is (PROJECT-SHARE-SALE-PLAN.md §4a). The first six
+/// belong to the person and serve every purchase; the rest belong to one.
+enum CustomerUploadKind {
+  id_document
+  photo
+  tin
+  address_proof
+  nominee_id
+  bank_proof
+  signed_copy
+  allotment_letter
+  deed
+  payment_proof
+  pdc
+  source_of_funds
+  power_of_attorney
+  other
+}
+
+enum CustomerUploadStatus {
+  under_review
+  accepted
+  rejected
+}
+
+/// Who put the paper on file.
+enum CustomerUploadSource {
+  customer
+  office
+}
+
+/// A file a customer sent in, and what the office decided about it.
+///
+/// Its own table rather than a `documents` row: a document is the office's
+/// filing, readable by whoever may open the record it hangs off, while this is
+/// the customer's own submission with a review state and a reason the customer
+/// is shown. The bytes go through the same `server/storage`.
+model CustomerUpload {
+  id          String  @id @default(uuid(7)) @db.Uuid
+  customer_id String  @db.Uuid
+  /// null for the customer's own papers (NID, photo), which serve every purchase
+  sale_id     String? @db.Uuid
+
+  source CustomerUploadSource @default(customer)
+  kind   CustomerUploadKind
+  title  String               @db.VarChar(200)
+  note   String?
+
+  /// the storage key, never sent to a browser; the file is served by id
+  storage_key String @db.VarChar(400)
+  file_name   String @db.VarChar(260)
+  file_type   String @db.VarChar(120)
+  file_size   Int
+
+  uploaded_at DateTime             @default(now()) @db.Timestamptz
+  status      CustomerUploadStatus @default(under_review)
+  reviewed_by String?              @db.Uuid
+  reviewed_on DateTime?            @db.Date
+  /// why it was turned down — shown to the customer, so it is written for them
+  review_note String?
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  customer           Customer            @relation(fields: [customer_id], references: [id])
+  sale               ShareSale?          @relation(fields: [sale_id], references: [id])
+  paymentSubmissions PaymentSubmission[]
+
+  @@index([customer_id, status])
+  @@index([sale_id])
+  @@index([status, uploaded_at])
+  @@map("customer_uploads")
+}
+
+/// How the customer says they paid, when it was not through the portal.
+enum OfflinePaymentMethod {
+  bank_deposit
+  bank_transfer
+  cheque_deposit
+  pay_order
+}
+
+enum PaymentSubmissionStatus {
+  submitted
+  confirmed
+  rejected
+  withdrawn
+}
+
+/// "I paid at the bank — here is the slip."
+///
+/// Nothing is paid until Accounts confirms it against the bank statement; the
+/// real payment is then written on the **date on the slip**, not the day it was
+/// confirmed, so the ledger and the late-fee maths see the money when it
+/// actually arrived (SHARE-SALE-FEEDBACK-PLAN.md part C).
+model PaymentSubmission {
+  id          String @id @default(uuid(7)) @db.Uuid
+  code        String @unique @db.VarChar(40)
+  customer_id String @db.Uuid
+  sale_id     String @db.Uuid
+
+  amount Decimal              @db.Decimal(18, 2)
+  method OfflinePaymentMethod
+
+  /// the date on the slip
+  paid_on              DateTime @db.Date
+  /// the company account the customer says the money went into
+  paid_into_account_id String?  @db.Uuid
+  /// transaction, slip or cheque number
+  reference            String   @db.VarChar(120)
+  note                 String?
+  /// the slip itself, as a customer upload of kind `payment_proof`
+  slip_upload_id       String?  @db.Uuid
+
+  status      PaymentSubmissionStatus @default(submitted)
+  reviewed_by String?                 @db.Uuid
+  reviewed_at DateTime?               @db.Timestamptz
+  /// why it was sent back — shown to the customer
+  review_note String?
+
+  /// the payment written on confirmation
+  payment_id String? @db.Uuid
+
+  created_at DateTime  @default(now()) @db.Timestamptz
+  updated_at DateTime  @updatedAt @db.Timestamptz
+  created_by String?   @db.Uuid
+  deleted_at DateTime? @db.Timestamptz
+
+  customer Customer        @relation(fields: [customer_id], references: [id])
+  sale     ShareSale       @relation(fields: [sale_id], references: [id])
+  account  BankAccount?    @relation(fields: [paid_into_account_id], references: [id])
+  slip     CustomerUpload? @relation(fields: [slip_upload_id], references: [id])
+  payment  SharePayment?   @relation(fields: [payment_id], references: [id])
+
+  @@index([status, created_at])
+  @@index([customer_id])
+  @@index([sale_id])
+  @@map("payment_submissions")
 }
