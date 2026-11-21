@@ -1,6 +1,6 @@
 # Next session — where to pick up
 
-Written 21 Nov 2026, at commit `721ca75` plus the whole-flow extension. Working
+Written 21 Nov 2026, at commit `5701ce5`. Working
 tree clean, pushed to `origin`
 (github.com/MahfuzurShakil/Share-Offering-platforms). `prototype` is the other
 remote: it is where Phase 2 reads Land and Construction back out of, never
@@ -15,7 +15,7 @@ the person who sold it is paid their commission.
 
 | | |
 |---|---|
-| **Foundation** | PostgreSQL 18, 31 Prisma models, 8 migrations. Transactional display codes (yearless where a record is not a document of a year), an audit row for every write, an append-only audit log, soft delete where it belongs, money in `Decimal`. |
+| **Foundation** | PostgreSQL 18, 34 Prisma models, 9 migrations. Transactional display codes (yearless where a record is not a document of a year), an audit row for every write, an append-only audit log, soft delete where it belongs, money in `Decimal`. |
 | **Auth** | argon2id passwords, mobile OTP, opaque sessions, Postgres rate limiting, server-enforced RBAC from `role_permissions`. `npm run create-admin` makes the first user. |
 | **Projects** | Master record, and a **Valuation** tab: what 100% is worth, into how many shares it is cut, the day it was valued. Locked once a round has been on the market. |
 | **Share offerings** | A round offers some of the project's shares and may add its own premium. The project cannot be sold twice over; a closed round hands its unsold shares back. |
@@ -25,10 +25,11 @@ the person who sold it is paid their commission.
 | **Profit sharing** | Income and cost, periods closed / approved / declared, every holder's share frozen on a record date. A loss is carried forward. The lines always add up to what was declared. |
 | **Withdrawals** | Balances (never stored — always `credited − paid − pending`), request → approve → pay, or refuse. |
 | **Sales team & commission** | A free tree of any depth with a **history**, so commission is read from the tree as it was on the sale date. Plans say what is earned and in what stages; the payment ledger releases each stage with nothing marked by hand; Accounts approves; a payout pays a member everything approved at once and can never be edited. |
-| **Checks** | 411 tests in 22 files, lint and types clean, production build of 68 pages. |
+| **Money (part)** | Accounts (`ACC-001`) for a payout or a withdrawal to name, and partners (`PTR-001`) — the company's, or one project's own investor who takes their share of it first. A percentage changes through a **dated** change, so a declaration made in June is not re-split in October, and `GET /projects/{id}/cap-table` puts customers and owners on one page as of any date. |
+| **Checks** | 462 tests in 24 files, lint and types clean, production build of 68 pages. |
 
-12 services, 56 API route files, and the screens for all of the above read them
-through `src/lib/api/*`.
+13 services, 62 API route files, and the screens for all of the above read them
+through `src/lib/api/*` — except the Money slice, which has no screens yet (below).
 
 ### The whole-flow test
 
@@ -44,21 +45,34 @@ repository has.
 
 ## Start here
 
-1. **Money** (`finance_expense`) — fund receipts, partners, loans, cash
-   position. Three things are already waiting for it, with the columns in
-   place: the owners' single line in a profit declaration becomes one per
-   partner; the member form's "Company partner" picker comes back; and a
-   commission payout and a withdrawal get their "paid from" account. This is
-   the last module the story needs to be complete.
-2. **Nobody has walked the whole flow in a browser yet.** The test above
-   covers the services end to end, and the screens have been checked as far as
-   a project and an offering. Still worth one human pass.
-3. **Users & Roles** (`user_management`) — still the prototype's static matrix.
+1. **The rest of Money** (`finance_expense`). Accounts and partners landed in
+   the last commit; what is left is the money moving: `fund_receipts` (a
+   partner's capital or a loan coming in), `fund_allocations` (the company pool
+   giving to a project), `loans` + `loan_repayments`, and the **cash position**
+   that adds them up per account. `fund.repository.ts` and `bank.repository.ts`
+   are the prototype's versions — both were written as a *construction* cost
+   view and need rewriting as a share-sale money view (AGENTS.md says so
+   explicitly). `domain/cash.ts` already holds the pure part.
+2. **Three screens that can come back now**, each one small, each previously
+   cut because its data did not exist:
+   - the member form's **Company partner** picker
+     (`components/admin/sales-team/parts.tsx`) — `GET /partners` serves it;
+   - the payout's **Paid from** account picker
+     (`app/admin/sales-team/payouts/page.tsx`) — `GET /accounts` serves it;
+   - `components/admin/finance/AccountPicker.tsx`, still on Dexie, which the
+     withdrawal screens use.
+3. **The Money screens** themselves: Partners, Accounts, Fund, Loans, Cash
+   Position, and a **cap table** tab on the project (the API is already there
+   and tested — nothing reads it yet).
+4. **Nobody has walked the whole flow in a browser yet.** The test above covers
+   the services end to end, and the screens have been checked as far as a
+   project and an offering. Still worth one human pass.
+5. **Users & Roles** (`user_management`) — still the prototype's static matrix.
    The server already reads `roles` / `role_permissions`, so this is the screen
    catching up with what the API does.
-4. **Dashboard** — rebuild on the KPIs this product actually has. It is the
-   one screen a client opens first and the last one still entirely on Dexie.
-5. **S4 and after**: the general ledger and auto-posting, file storage, the PDF
+6. **Dashboard** — rebuild on the KPIs this product actually has. It is the one
+   screen a client opens first and the last one still entirely on Dexie.
+7. **S4 and after**: the general ledger and auto-posting, file storage, the PDF
    engine, the audit-log viewer, the payment-gateway webhook, background jobs,
    `scripts/demo/*` through the REST API, staging and Docker.
 
@@ -145,12 +159,16 @@ stopped — stop the dev server first, generate, then start it again.
 - Local database credentials are in `.env` (gitignored); the app connects as
   `sharesale_app`. Tests use `sharesale_test` through `DATABASE_URL_TEST`, in
   one fork — do not parallelise them.
-- Deliberately deferred, written down so they are not forgotten: the owners'
-  side of a declaration is one line until partners move; the "Company partner"
-  and "Paid from account" pickers are out of the sales-team screens for the
-  same reason; the signing wizard is a single dialog until documents move; the
-  Purchases and Ownership tabs on a round, and the per-purchase paper
-  checklist, come back with documents too.
+- Deliberately deferred, written down so they are not forgotten: the signing
+  wizard is a single dialog until documents move, and the Purchases and
+  Ownership tabs on a round, and the per-purchase paper checklist, come back
+  with documents too. **Two that are no longer blocked**: the "Company partner"
+  and "Paid from account" pickers were taken out of the sales-team screens
+  because partners and accounts did not exist — they do now, and putting them
+  back is item 2 above.
+- **A declaration with no partners on file still works**, and must keep
+  working: the owners' side falls back to one unattributed line, because a
+  client starts with none. There is a test for it.
 
 ## Decisions waiting
 
