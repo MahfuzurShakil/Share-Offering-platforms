@@ -187,15 +187,6 @@ function toCustomer(c: Customer, since: string, type: 'buyer' | 'investor' = 'in
   };
 }
 
-const STATUS_PROGRESS: Record<Project['status'], number> = {
-  planning: 0,
-  design: 0,
-  approval: 0,
-  under_construction: 30,
-  nearly_complete: 90,
-  handover_ongoing: 100,
-  closed: 100,
-};
 
 /** Object URLs for uploaded cover pictures, made once per document. */
 const coverUrls = new Map<string, string>();
@@ -209,7 +200,7 @@ function coverOf(p: Project, docs: Map<string, DocumentRecord>): string {
   return p.cover_image_url || FALLBACK_IMAGE;
 }
 
-function toProject(p: Project, latest: ShareOffering | undefined, progress: number | null, image: string): InvestorProject {
+function toProject(p: Project, latest: ShareOffering | undefined, image: string): InvestorProject {
   const type = PROJECT_TYPE_LABEL[p.project_type];
   return {
     code: p.code,
@@ -220,7 +211,6 @@ function toProject(p: Project, latest: ShareOffering | undefined, progress: numb
     summary: p.surroundings?.trim() ? `${type} project in ${p.location_summary ?? 'Bangladesh'}. Close to ${p.surroundings.trim()}.` : `${type} project in ${p.location_summary ?? 'Bangladesh'}.`,
     valuation: latest?.valuation ?? 0,
     valuation_date: latest?.valuation_date ?? p.created_at.slice(0, 10),
-    construction_progress_pct: progress ?? STATUS_PROGRESS[p.status],
   };
 }
 
@@ -512,8 +502,7 @@ export const investorRepository = {
 
     const portalProjects = [...projectById.values()].map((p) => {
       const latest = listed.filter((o) => o.project_id === p.id).sort((a, b) => b.round_no - a.round_no)[0];
-      // construction progress belongs to the build this product does not carry
-      return toProject(p, latest, null, coverOf(p, docs));
+      return toProject(p, latest, coverOf(p, docs));
     });
     const projectCode = (id: string) => projectById.get(id)?.code ?? '—';
     const rounds = roundOfferings.filter((o) => projectById.has(o.project_id)).map((o) => toRound(o, projectCode(o.project_id), allSales, today));

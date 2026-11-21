@@ -7,7 +7,7 @@ import { WhatsAppButton } from '@/components/public/WhatsAppButton';
 
 export const metadata: Metadata = {
   title: 'Apartments, plots and land shares',
-  description: 'Projects on sale, live availability, construction progress and enquiries.',
+  description: 'Projects open for investment, what each round offers, and how to enquire.',
 };
 
 /**

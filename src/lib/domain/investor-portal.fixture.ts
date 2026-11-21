@@ -86,7 +86,6 @@ export function buildDemoData(today: string): DemoData {
       summary: 'A 280-key five-star hotel with conference halls, rooftop dining and serviced suites on Gulshan Lake.',
       valuation: 120 * CRORE,
       valuation_date: at(-1, 15),
-      construction_progress_pct: 38,
     },
     {
       code: 'PRJ-2026-011',
@@ -97,7 +96,6 @@ export function buildDemoData(today: string): DemoData {
       summary: 'A sea-facing resort with 160 rooms, private villas and a spa on Kolatoli beach.',
       valuation: 60 * CRORE,
       valuation_date: at(-6, 1),
-      construction_progress_pct: 21,
     },
     {
       code: 'PRJ-2025-004',
@@ -108,7 +106,6 @@ export function buildDemoData(today: string): DemoData {
       summary: 'A 16-storey Grade-A office tower, fully let to corporate tenants.',
       valuation: 90 * CRORE,
       valuation_date: at(-2, 1),
-      construction_progress_pct: 100,
     },
     {
       code: 'PRJ-2026-015',
@@ -119,7 +116,6 @@ export function buildDemoData(today: string): DemoData {
       summary: 'A 90-room eco resort with cottages among the tea gardens, an infinity pool and a wellness centre.',
       valuation: 45 * CRORE,
       valuation_date: at(0, 1),
-      construction_progress_pct: 6,
     },
   ];
 

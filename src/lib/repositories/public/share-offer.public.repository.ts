@@ -78,7 +78,6 @@ function toPublicProject(p: Project, image: string): InvestorProject {
     summary: `${type} project in ${p.location_summary?.trim() || 'Bangladesh'}.`,
     valuation: 0,
     valuation_date: '',
-    construction_progress_pct: 0,
   };
 }
 

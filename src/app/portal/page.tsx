@@ -27,7 +27,7 @@ const PORTALS: {
     icon: LayoutDashboard,
     title: 'Admin Portal',
     who: 'For the company team',
-    body: 'Run the business: land, projects, sales and bookings, construction, payments and fund.',
+    body: 'Run the business: projects, share sale, profit sharing, the sales team and the money.',
     points: ['Land and project pipeline', 'Leads, bookings and collections', 'Site progress, purchases and payments'],
     tone: {
       card: 'hover:border-admin-400',

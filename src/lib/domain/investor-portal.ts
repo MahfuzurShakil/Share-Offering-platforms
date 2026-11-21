@@ -68,7 +68,6 @@ export interface InvestorProject {
   /** latest valuation of 100% of the project */
   valuation: number;
   valuation_date: string;
-  construction_progress_pct: number;
 }
 
 export interface ShareRound {
@@ -765,16 +764,6 @@ export function buildNotifications(s: InvestorSnapshot, portfolio: PortfolioView
       body: `${round.shares_available} shares available at ${formatTaka(round.price_per_share)} each, until ${formatDay(round.closes_on)}.`,
       date: round.opens_on,
       href: '/customer#opportunities',
-    });
-  }
-  for (const v of portfolio.holdings.filter((h) => h.project.construction_progress_pct < 100)) {
-    out.push({
-      id: `progress-${v.project.code}-${v.project.construction_progress_pct}`,
-      kind: 'update',
-      title: `${v.project.name}: construction update`,
-      body: `Work has reached ${v.project.construction_progress_pct}% completion.`,
-      date: v.project.valuation_date,
-      href: holdingHref(v.holding),
     });
   }
   const rank: Record<NotificationKind, number> = { overdue: 0, reminder: 1, payment: 2, offering: 3, update: 4 };
